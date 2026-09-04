@@ -286,7 +286,7 @@ class OpenAI_APIRerank(Base):
         token_count = 0
         for t in texts:
             token_count += num_tokens_from_string(t)
-        response = requests.post(self.base_url, headers=self.headers, json=data, timeout=30)
+        response = requests.post(self.base_url, headers=self.headers, json=data, timeout=600)
         response.raise_for_status()
         res = response.json()
         rank = np.zeros(len(texts), dtype=float)

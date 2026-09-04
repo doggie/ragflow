@@ -257,16 +257,21 @@ def _crop_pdf_preview(page_images, positions, zoom=PDF_PREVIEW_ZOOM):
     for idx, (pages, left, right, top, bottom) in enumerate(crop_positions):
         page_idx = pages[0]
         effective_right = left + max_width if idx in {0, len(crop_positions) - 1} else max(left + 10, right)
-        imgs.append(
-            page_images[page_idx].crop(
-                (
-                    left * zoom,
-                    top * zoom,
-                    effective_right * zoom,
-                    min(bottom * zoom, page_images[page_idx].size[1]),
+        page_h = page_images[page_idx].size[1]
+        try:
+            imgs.append(
+                page_images[page_idx].crop(
+                    (
+                        left * zoom,
+                        min(max(top, 0), page_h) * zoom,
+                        effective_right * zoom,
+                        min(bottom * zoom, page_h),
+                    )
                 )
             )
-        )
+        except Exception:
+            logging.warning("Skip chunk preview crop for invalid bbox on page %s", page_idx)
+            continue
 
     canvas_height = int(sum(img.size[1] for img in imgs) + PDF_PREVIEW_GAP * len(imgs))
     canvas_width = int(max(img.size[0] for img in imgs))
