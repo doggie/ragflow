@@ -281,9 +281,10 @@ export default defineConfig(({ mode }) => {
       minify: resolveMinify(env.VITE_MINIFY),
       terserOptions: {
         compress: {
-          drop_console: true, // delete console
+          // Keep console statements (console.info/error/warn) in the production
+          // build so the upload-batch diagnostics the UI prints are visible in
+          // browser DevTools. Do not re-add drop_console/pure_funcs here.
           drop_debugger: true, // delete debugger
-          pure_funcs: ['console.log'],
         },
         mangle: {
           // properties: {

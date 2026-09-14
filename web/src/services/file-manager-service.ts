@@ -15,6 +15,7 @@
  */
 
 import api from '@/utils/api';
+import nextRequest from '@/utils/next-request';
 import registerServer from '@/utils/register-server';
 import request from '@/utils/request';
 
@@ -77,6 +78,15 @@ const fileManagerService = registerServer<keyof typeof methods>(
   methods,
   request,
 );
+
+export const uploadFileManagerFile = (
+  formData: FormData,
+  options?: { onUploadProgress?: (progressEvent: any) => void },
+) => {
+  return nextRequest.post(api.uploadFile, formData, {
+    onUploadProgress: options?.onUploadProgress,
+  });
+};
 
 export const downloadAgentFile = (data: { docId: string; ext: string }) => {
   return request.get(getAttachmentFileDownload(data.docId), {

@@ -2090,15 +2090,29 @@ async def rag_agent(dialog, messages, stream=True, **kwargs):
     logging.debug("web_search kb=%s configured=%s internet=%r enabled=%s", bool(dialog.kb_ids), has_web_search_provider(prompt_config), kwargs.get("internet"), use_web_search)
     tenant_ids = list(set([kb.tenant_id for kb in kbs]))
     # "reasoning" arrives as "1".."4" mapping to the ordered THINKING_MODES
-    # (low, medium, high, ultra); fall back to "medium" on anything else.
+    # (low, medium, high, ultra). The web UI sends Number(enableThinking), so
+    # the off-default sends 0 / False — those should drop us out of the full
+    # agentic graph into the naive single-pass retrieval (otherwise the SCA
+    # loop burns tokens on queries the user just wants a straight answer for).
+    # A missing field stays at the legacy default of "medium" so existing
+    # callers and tenants that never sent the flag keep working.
     from rag.advanced_rag.harness.config import THINKING_MODES
 
     _mode_labels = list(THINKING_MODES.keys())
-    try:
-        _n = int(str(kwargs.get("reasoning")).strip())
-        thinking_mode = _mode_labels[_n - 1] if 1 <= _n <= len(_mode_labels) else "medium"
-    except (TypeError, ValueError):
-        thinking_mode = "medium"
+    _raw = kwargs.get("reasoning")
+    thinking_mode = "medium"  # backward-compat default for missing field
+    if _raw is not None:
+        try:
+            _n = int(str(_raw).strip())
+            if _n == 0:
+                thinking_mode = "low"
+            elif 1 <= _n <= len(_mode_labels):
+                thinking_mode = _mode_labels[_n - 1]
+            # else: out-of-range stays "medium"
+        except (TypeError, ValueError):
+            # boolean False / "" / non-numeric → user explicitly disabled
+            if isinstance(_raw, bool) and not _raw:
+                thinking_mode = "low"
 
     gen_conf = dialog.llm_setting or {}
     doc_scope = None

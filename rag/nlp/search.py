@@ -266,7 +266,12 @@ class Dealer:
                     vector_weight = req.get("vector_similarity_weight", 0.3)
                     fusionExpr = FusionExpr("weighted_sum", knn_top_k, {"weights": f"{1 - float(vector_weight)},{float(vector_weight)}"})
                 else:
-                    fusionExpr = FusionExpr("weighted_sum", knn_top_k, {"weights": "0.001,1"})
+                    # ES: weights = (term_weight, vector_weight) control how the
+                    # hybrid score is combined. Using 0.001 for the vector side
+                    # zeroes the KNN contribution, which is NOT the configured
+                    # behavior. Mirrors build_fusion_expr() for Infinity.
+                    vsw = float(req.get("vector_similarity_weight", 0.3))
+                    fusionExpr = FusionExpr("weighted_sum", knn_top_k, {"weights": f"{1 - vsw:g},{vsw:g}"})
                 matchExprs = [matchText, matchDense, fusionExpr] if matchText else [matchDense]
 
                 res = await thread_pool_exec(self.dataStore.search, src, highlightFields, filters, matchExprs, orderBy, offset, limit, idx_names, kb_ids, rank_feature=rank_feature)

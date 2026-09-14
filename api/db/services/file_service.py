@@ -593,7 +593,16 @@ class FileService(CommonService):
             merged_parser_config = base_parser_config
 
         err, files = [], []
-        for file in file_objs:
+        import time
+        batch_start = time.time()
+        logger.info(
+            "[upload_document] Starting batch processing for %d files (kb_id=%s, user_id=%s)",
+            len(file_objs),
+            kb.id,
+            user_id,
+        )
+        for idx, file in enumerate(file_objs, 1):
+            file_start = time.time()
             doc_id = file.id if hasattr(file, "id") else get_uuid()
             e, doc = DocumentService.get_by_id(doc_id)
             if e and str(doc.kb_id) != str(kb.id):
@@ -626,6 +635,14 @@ class FileService(CommonService):
                     DocumentService.update_by_id(doc["id"], doc)
                     if new_hash != old_hash:
                         files.append((doc, blob))
+                    logger.info(
+                        "[upload_document] [%d/%d] Updated existing doc '%s' (%d bytes) in %.2fs",
+                        idx,
+                        len(file_objs),
+                        file.filename,
+                        len(blob),
+                        time.time() - file_start,
+                    )
                 except Exception as exc:
                     logger.exception("Failed to update document %s", doc_id)
                     err.append(file.filename + ": " + str(exc))
@@ -673,9 +690,31 @@ class FileService(CommonService):
 
                 FileService.add_file_from_kb(doc, kb_folder["id"], kb.tenant_id)
                 files.append((doc, blob))
+                logger.info(
+                    "[upload_document] [%d/%d] Ingested new doc '%s' (%d bytes) in %.2fs",
+                    idx,
+                    len(file_objs),
+                    filename,
+                    len(blob),
+                    time.time() - file_start,
+                )
             except Exception as e:  # noqa: BLE001 - collect per-file errors and keep processing the rest
+                logger.warning(
+                    "[upload_document] [%d/%d] Failed '%s': %s",
+                    idx,
+                    len(file_objs),
+                    file.filename,
+                    e,
+                )
                 err.append(file.filename + ": " + str(e))
 
+        logger.info(
+            "[upload_document] Completed batch of %d files in %.2fs (success=%d, err=%d)",
+            len(file_objs),
+            time.time() - batch_start,
+            len(files),
+            len(err),
+        )
         return err, files
 
     @classmethod

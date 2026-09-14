@@ -230,12 +230,14 @@ export function FileUploader(props: FileUploaderProps) {
 
       const newFiles = acceptedFiles.map((file) => {
         const enhancedFile = file as File & { preview?: string };
-        Object.defineProperty(enhancedFile, 'preview', {
-          value: URL.createObjectURL(file),
-          writable: true,
-          enumerable: true,
-          configurable: true,
-        });
+        if (file.type.startsWith('image/')) {
+          Object.defineProperty(enhancedFile, 'preview', {
+            value: URL.createObjectURL(file),
+            writable: true,
+            enumerable: true,
+            configurable: true,
+          });
+        }
         return enhancedFile;
       });
 
@@ -293,6 +295,11 @@ export function FileUploader(props: FileUploaderProps) {
     setFiles(newFiles);
     onValueChange?.(newFiles);
   }
+
+  const handleClearAll = React.useCallback(() => {
+    setFiles([]);
+    onValueChange?.([]);
+  }, [setFiles, onValueChange]);
 
   // Revoke preview url when component unmounts
   React.useEffect(() => {
@@ -426,9 +433,26 @@ export function FileUploader(props: FileUploaderProps) {
       )}
 
       {files?.length ? (
-        <div className="h-fit w-full">
+        <div className="h-fit w-full space-y-2">
+          <div className="flex items-center justify-between text-xs text-text-secondary px-1">
+            <span>
+              {files.length > 50
+                ? t('fileManager.filesSelectedSummary', {
+                    total: files.length,
+                    shown: 50,
+                  })
+                : `${files.length} ${t('fileManager.files')}`}
+            </span>
+            <button
+              type="button"
+              className="text-text-disabled hover:text-accent-destructive transition-colors cursor-pointer"
+              onClick={handleClearAll}
+            >
+              {t('fileManager.removeAllFiles')}
+            </button>
+          </div>
           <div className="flex max-h-48 flex-col gap-4 overflow-auto scrollbar-auto">
-            {files?.map((file, index) => (
+            {files.slice(0, 50).map((file, index) => (
               <FileCard
                 key={index}
                 file={file}

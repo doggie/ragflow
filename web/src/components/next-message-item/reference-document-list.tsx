@@ -21,6 +21,7 @@ import PdfDrawer from '@/pages/next-search/document-preview-modal';
 import { middleEllipsis } from '@/utils/common-util';
 import { useState } from 'react';
 import FileIcon from '../file-icon';
+import NewDocumentLink from '../new-document-link';
 
 export function ReferenceDocumentList({ list }: { list: Docagg[] }) {
   const { visible, showModal, hideModal } = useSetModalState();
@@ -37,18 +38,17 @@ export function ReferenceDocumentList({ list }: { list: Docagg[] }) {
             }}
           >
             <FileIcon id={item.doc_id} name={item.doc_name}></FileIcon>
-            {/* <NewDocumentLink
+            <NewDocumentLink
               documentId={item.doc_id}
               documentName={item.doc_name}
-              prefix="document"
               link={item.url}
               className="text-text-sub-title-invert"
+              onClick={(e: React.MouseEvent<HTMLAnchorElement>) =>
+                e.stopPropagation()
+              }
             >
               {middleEllipsis(item.doc_name)}
-            </NewDocumentLink> */}
-            <div className="text-text-sub-title-invert">
-              {middleEllipsis(item.doc_name)}
-            </div>
+            </NewDocumentLink>
           </CardContent>
         </Card>
       ))}

@@ -340,9 +340,15 @@ export const listDocument = (
 export const documentFilter = (kb_id: string) =>
   request.get(api.getDatasetFilter(kb_id), { params: {} });
 
-export const uploadDocument = async (datasetId: string, formData: FormData) => {
+export const uploadDocument = async (
+  datasetId: string,
+  formData: FormData,
+  options?: { onUploadProgress?: (progressEvent: any) => void },
+) => {
   const url = api.documentUpload(datasetId);
-  const response = await request.post(url, { data: formData });
+  const response = await nextRequest.post(url, formData, {
+    onUploadProgress: options?.onUploadProgress,
+  });
   return response.data;
 };
 

@@ -5,16 +5,48 @@ import {
   useUploadDocument,
 } from '@/hooks/use-document-request';
 import { getUnSupportedFilesCount } from '@/utils/document-util';
-import { useCallback } from 'react';
+import { useCallback, useEffect } from 'react';
+import { useTranslation } from 'react-i18next';
 
 export const useHandleUploadDocument = () => {
+  const { t } = useTranslation();
   const {
     visible: documentUploadVisible,
     hideModal: hideDocumentUploadModal,
     showModal: showDocumentUploadModal,
   } = useSetModalState();
-  const { uploadDocument, loading } = useUploadDocument();
+  const { uploadDocument, loading, batchProgress } = useUploadDocument();
   const { runDocumentByIds } = useRunDocument();
+
+  // Prevent user from accidentally closing/refreshing tab while uploading
+  useEffect(() => {
+    if (!loading) return;
+    const handleBeforeUnload = (e: BeforeUnloadEvent) => {
+      e.preventDefault();
+      e.returnValue = '';
+    };
+    window.addEventListener('beforeunload', handleBeforeUnload);
+    return () => {
+      window.removeEventListener('beforeunload', handleBeforeUnload);
+    };
+  }, [loading]);
+
+  let uploadProgressText: string | undefined;
+  if (batchProgress) {
+    const batchHeader = t('fileManager.uploadingBatch', {
+      current: batchProgress.current,
+      total: batchProgress.total,
+    });
+    if (batchProgress.isServerProcessing) {
+      uploadProgressText = `${batchHeader} (${batchProgress.percent}%) - ${t('fileManager.uploadServerProcessing')}`;
+    } else if (batchProgress.stalled) {
+      uploadProgressText = `${batchHeader} (等待網路連線 / 傳輸中斷重試中…) - ${t('fileManager.uploadingFile', { filename: batchProgress.currentFileName })}`;
+    } else {
+      const speed = t('fileManager.uploadSpeed', { speed: batchProgress.speedKbps });
+      const currentFile = t('fileManager.uploadingFile', { filename: batchProgress.currentFileName });
+      uploadProgressText = `${batchHeader} (${batchProgress.percent}%, ${speed}) - ${currentFile}`;
+    }
+  }
 
   const onDocumentUploadOk = useCallback(
     async ({
@@ -79,6 +111,7 @@ export const useHandleUploadDocument = () => {
 
   return {
     documentUploadLoading: loading,
+    uploadProgressText,
     onDocumentUploadOk,
     documentUploadVisible,
     hideDocumentUploadModal,

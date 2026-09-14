@@ -287,9 +287,6 @@ def chunk(filename, binary=None, from_page=0, to_page=MAXIMUM_PAGE_NUMBER, lang=
             res[0]["__outline__"] = [{"title": title, "depth": depth} for title, depth, *_ in pdf_parser.outlines]
         return res
 
-    elif re.search(r"\.doc$", filename, re.IGNORECASE):
-        raise NotImplementedError("Legacy .doc files are not supported by the Manual parser. Please convert the file to .docx or PDF and try again.")
-
     elif re.search(r"\.docx$", filename, re.IGNORECASE):
         docx_parser = Docx()
         ti_list, tbls = docx_parser(filename, binary, from_page=0, to_page=MAXIMUM_PAGE_NUMBER, callback=callback)
@@ -313,8 +310,22 @@ def chunk(filename, binary=None, from_page=0, to_page=MAXIMUM_PAGE_NUMBER, lang=
         if table_ctx or image_ctx:
             attach_media_context(res, table_ctx, image_ctx)
         return res
+
+    # Fall back to the general-purpose parsers for file types the Manual parser
+    # does not natively handle. A knowledge base can legitimately hold mixed
+    # content (code, configs, spreadsheets, slides, legacy .doc) uploaded
+    # together with PDF/DOCX documents, so route them to the parser that
+    # understands each format instead of failing the whole task with
+    # NotImplementedError.
+    elif re.search(r"\.(csv|xlsx?)$", filename, re.IGNORECASE):
+        from rag.app import table as table_chunk
+        return table_chunk.chunk(filename, binary=binary, from_page=from_page, to_page=to_page, lang=lang, callback=callback, **kwargs)
+    elif re.search(r"\.(ppt|pptx|pages|key)$", filename, re.IGNORECASE):
+        from rag.app import presentation as presentation_chunk
+        return presentation_chunk.chunk(filename, binary=binary, from_page=from_page, to_page=to_page, lang=lang, callback=callback, **kwargs)
     else:
-        raise NotImplementedError("file type not supported yet(pdf and docx supported)")
+        from rag.app import naive as naive_chunk
+        return naive_chunk.chunk(filename, binary=binary, from_page=from_page, to_page=to_page, lang=lang, callback=callback, **kwargs)
 
 
 if __name__ == "__main__":

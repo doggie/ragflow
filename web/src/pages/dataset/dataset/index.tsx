@@ -42,6 +42,7 @@ export default function Dataset() {
     showDocumentUploadModal,
     onDocumentUploadOk,
     documentUploadLoading,
+    uploadProgressText,
   } = useHandleUploadDocument();
   const { knowledgeBase } = useKnowledgeBaseContext();
   const {
@@ -206,6 +207,7 @@ export default function Dataset() {
             hideModal={hideDocumentUploadModal}
             onOk={onDocumentUploadOk}
             loading={documentUploadLoading}
+            loadingText={uploadProgressText}
             showParseOnCreation
             isTableParser={knowledgeBase?.chunk_method === 'table'}
           ></FileUploadDialog>

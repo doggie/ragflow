@@ -1259,7 +1259,7 @@ def chunk(filename, binary=None, from_page=0, to_page=MAXIMUM_PAGE_NUMBER, lang=
             sections = []
             callback(0.8, "Finish parsing.")
 
-    elif re.search(r"\.(txt|py|js|java|c|cpp|h|php|go|ts|sh|cs|kt|sql)$", filename, re.IGNORECASE):
+    elif re.search(r"\.(txt|ini|xml|yml|yaml|log|key|py|js|java|c|cpp|h|php|go|ts|sh|cs|kt|sql)$", filename, re.IGNORECASE):
         callback(0.1, "Start to parse.")
         sections = TxtParser()(filename, binary, parser_config.get("chunk_token_num", 128), parser_config.get("delimiter", "\n!?;。；！？"))
         sections = _normalize_section_text_for_rtl_presentation_forms(sections)
@@ -1310,7 +1310,11 @@ def chunk(filename, binary=None, from_page=0, to_page=MAXIMUM_PAGE_NUMBER, lang=
                         **kwargs,
                     )
                     boosted_figures = markdown_vision_parser(callback=callback)
-                    sections[idx] = (section_text + "\n\n" + "\n\n".join([fig[0][1] for fig in boosted_figures]), sections[idx][1])
+                    # Defense in depth: figure_parser now guarantees descriptions[i] is str,
+                    # but coerce here so future caller regressions don't 500 the whole chunking.
+                    def _coerce(v):
+                        return "\n\n".join(s for s in v if isinstance(s, str)) if isinstance(v, list) else (v or "")
+                    sections[idx] = (section_text + "\n\n" + "\n\n".join([_coerce(fig[0][1]) for fig in boosted_figures]), sections[idx][1])
 
         else:
             logging.warning("No visual model detected. Skipping figure parsing enhancement.")
@@ -1349,6 +1353,34 @@ def chunk(filename, binary=None, from_page=0, to_page=MAXIMUM_PAGE_NUMBER, lang=
 
     elif re.search(r"\.doc$", filename, re.IGNORECASE):
         callback(0.1, "Start to parse.")
+
+        # Try converting .doc to PDF using local LibreOffice/soffice first
+        converted_to_pdf = False
+        import tempfile, subprocess, os
+        try:
+            with tempfile.TemporaryDirectory() as tmpdir:
+                in_path = os.path.join(tmpdir, "input.doc")
+                with open(in_path, "wb") as f:
+                    f.write(binary)
+                cmd = ["soffice", "--headless", "--convert-to", "pdf", in_path, "--outdir", tmpdir]
+                proc = subprocess.run(cmd, capture_output=True, timeout=60)
+                out_pdf = os.path.join(tmpdir, "input.pdf")
+                if proc.returncode == 0 and os.path.exists(out_pdf):
+                    with open(out_pdf, "rb") as pf:
+                        pdf_binary = pf.read()
+                    if pdf_binary:
+                        converted_to_pdf = True
+                        return chunk(
+                            re.sub(r"\.doc$", ".pdf", filename, flags=re.IGNORECASE),
+                            binary=pdf_binary,
+                            from_page=from_page,
+                            to_page=to_page,
+                            lang=lang,
+                            callback=callback,
+                            **kwargs,
+                        )
+        except Exception as lo_err:
+            logging.warning(f"LibreOffice conversion failed for {filename}: {lo_err}")
 
         try:
             from tika import parser as tika_parser

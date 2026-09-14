@@ -14,7 +14,19 @@
 #  limitations under the License.
 #
 
+import os
+
 import infinity.rag_tokenizer
+
+# Path to user-managed dictionary (proper nouns: person names, organizations,
+# place names, government agencies). When this file exists, its entries are
+# appended to the default huqie trie at tokenizer init so they survive as
+# single tokens after the tradi2simp pipeline. See rag/res/user_dict.txt.
+_USER_DICT_PATH = os.path.join(
+    os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
+    "res",
+    "user_dict.txt",
+)
 
 
 class RagTokenizer(infinity.rag_tokenizer.RagTokenizer):
@@ -52,6 +64,20 @@ def naive_qie(txt):
 
 
 tokenizer = RagTokenizer()
+# Append user-supplied proper nouns (Traditional-Chinese persons/orgs/places)
+# so they tokenize as a single token rather than per-char.
+# Loaded once at module import; subsequent RAGFlow runs skip the rebuild.
+if os.path.exists(_USER_DICT_PATH):
+    try:
+        tokenizer.add_user_dict(_USER_DICT_PATH)
+        logging_import_path = _USER_DICT_PATH + ".trie"
+        try:
+            tokenizer.trie_.save(logging_import_path)
+        except Exception:
+            pass  # cache write is best-effort
+    except Exception:
+        import logging
+        logging.exception("[rag_tokenizer] fail to load user_dict %s; fallback to default", _USER_DICT_PATH)
 tokenize = tokenizer.tokenize
 fine_grained_tokenize = tokenizer.fine_grained_tokenize
 tag = tokenizer.tag

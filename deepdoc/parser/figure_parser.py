@@ -320,8 +320,15 @@ class VisionFigureParser:
                 done, pending = wait(pending, timeout=1.0, return_when=FIRST_COMPLETED)
                 for future in done:
                     figure_num, txt = future.result()
-                    if txt:
-                        self.descriptions[figure_num] = txt + "\n".join(self.descriptions[figure_num])
+                    # Guarantee descriptions[i] is a string (consumer contract):
+                    # VLM returned text -> prefix + joined placeholders; VLM failed/timed out
+                    # (tiny image skip, exception) -> at least flatten the placeholder list.
+                    existing = self.descriptions[figure_num]
+                    if isinstance(existing, list):
+                        joined = "\n".join(s for s in existing if isinstance(s, str))
+                    else:
+                        joined = existing or ""
+                    self.descriptions[figure_num] = (txt + "\n" + joined).strip("\n") if txt else joined
                 callback(0.75, "")
         except Exception:
             for f in pending:

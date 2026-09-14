@@ -152,9 +152,36 @@ def chunk(filename, binary=None, from_page=0, to_page=MAXIMUM_PAGE_NUMBER, lang=
                 res.append(d)
             return res
         except Exception as e:
-            logging.warning(f"python-pptx parsing failed for {filename}: {e}, trying tika as fallback")
+            logging.warning(f"python-pptx parsing failed for {filename}: {e}, trying LibreOffice as fallback")
             if callback:
-                callback(0.1, "python-pptx failed, trying tika as fallback")
+                callback(0.1, "python-pptx failed, trying LibreOffice conversion")
+
+            import tempfile, subprocess, os
+            try:
+                with tempfile.TemporaryDirectory() as tmpdir:
+                    ext = os.path.splitext(filename)[1] or ".ppt"
+                    in_path = os.path.join(tmpdir, f"input{ext}")
+                    with open(in_path, "wb") as f:
+                        f.write(binary if binary is not None else open(filename, "rb").read())
+                    cmd = ["soffice", "--headless", "--convert-to", "pdf", in_path, "--outdir", tmpdir]
+                    proc = subprocess.run(cmd, capture_output=True, timeout=90)
+                    out_pdf = os.path.join(tmpdir, "input.pdf")
+                    if proc.returncode == 0 and os.path.exists(out_pdf):
+                        with open(out_pdf, "rb") as pf:
+                            pdf_data = pf.read()
+                        if pdf_data:
+                            return chunk(
+                                re.sub(r"\.(pptx?|key|pages)$", ".pdf", filename, flags=re.IGNORECASE),
+                                binary=pdf_data,
+                                from_page=from_page,
+                                to_page=to_page,
+                                lang=lang,
+                                callback=callback,
+                                parser_config=parser_config,
+                                **kwargs,
+                            )
+            except Exception as lo_err:
+                logging.warning(f"LibreOffice conversion failed for {filename}: {lo_err}")
 
             try:
                 from tika import parser as tika_parser

@@ -503,6 +503,8 @@ def queue_tasks(doc: dict, bucket: str, name: str, priority: int):
                 task["from_page"] = p
                 task["to_page"] = min(p + page_size, e)
                 parse_task_array.append(task)
+        if not parse_task_array:
+            parse_task_array.append(new_task())
 
     elif doc["parser_id"] == "table":
         file_bin = settings.STORAGE_IMPL.get(bucket, name)

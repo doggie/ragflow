@@ -82,6 +82,16 @@ export async function runChatCompletionStream({
       },
       controller.signal,
     );
+    // [DEBUG] SSE connection established
+    console.debug(
+      '[ragflow-debug] SSE start: status=%d content-type=%s url=%s',
+      response.status,
+      response.headers.get('content-type'),
+      response.url,
+    );
+    const streamStartAt = Date.now();
+    let chunkCount = 0;
+    let byteCount = 0;
 
     // Clone before the body is consumed: an error response carries a JSON
     // body, which is how a failed completion is detected. On a successful SSE
@@ -90,6 +100,22 @@ export async function runChatCompletionStream({
 
     try {
       for await (const chunk of parseCompletionEventStream(response)) {
+        chunkCount += 1;
+        const chunkAnswer = chunk.answer ?? '';
+        byteCount += chunkAnswer.length;
+        // [DEBUG] per-chunk trace: every 10 chunks to avoid log spam
+        if (chunkCount === 1 || chunkCount % 10 === 0 || chunk.final) {
+          console.debug(
+            '[ragflow-debug] chunk #%d: answer_len=%d accum_len=%d final=%s reference=%s',
+            chunkCount,
+            chunkAnswer.length,
+            accumulatedAnswer.length + chunkAnswer.length,
+            String(Boolean(chunk.final)),
+            chunk.reference
+              ? JSON.stringify(chunk.reference).slice(0, 80)
+              : 'none',
+          );
+        }
         accumulatedAnswer = mergeAnswerChunk(accumulatedAnswer, chunk);
         pendingChunk = pendingChunk ? { ...pendingChunk, ...chunk } : chunk;
 
@@ -99,7 +125,22 @@ export async function runChatCompletionStream({
           flushAnswer();
         }
       }
+      // [DEBUG] stream end summary
+      console.debug(
+        '[ragflow-debug] SSE end: chunks=%d final_accum_len=%d elapsed_ms=%d controller_aborted=%s',
+        chunkCount,
+        accumulatedAnswer.length,
+        Date.now() - streamStartAt,
+        String(controller.signal.aborted),
+      );
     } catch (error) {
+      console.debug(
+        '[ragflow-debug] SSE loop threw: %s accum_len_before=%d chunks_before=%d elapsed_ms=%d',
+        error instanceof Error ? error.name : String(error),
+        accumulatedAnswer.length,
+        chunkCount,
+        Date.now() - streamStartAt,
+      );
       if (error instanceof DOMException && error.name === 'AbortError') {
         aborted = true;
       } else {

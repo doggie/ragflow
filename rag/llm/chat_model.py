@@ -317,10 +317,19 @@ class Base(ABC):
             request_kwargs["stop"] = stop
         request_kwargs.update(extra_request_kwargs)
 
+        # A hard cap on total stream duration. httpx's read timeout only bounds a
+        # single stalled read, so a stream that trickles slowly forever would
+        # otherwise run unbounded; this bounds the whole response. A fully frozen
+        # read (no data at all) is bounded by the client's read timeout instead.
+        stream_budget = int(os.environ.get("LLM_TIMEOUT_SECONDS", 600))
+        stream_start = time.monotonic()
+        completed = False
         response = await self.async_client.chat.completions.create(**request_kwargs)
         async for resp in response:
             if not resp.choices:
                 continue
+            if time.monotonic() - stream_start > stream_budget:
+                raise TimeoutError(f"LLM stream exceeded {stream_budget}s budget; aborting partial response")
             if not resp.choices[0].delta.content:
                 resp.choices[0].delta.content = ""
             _reasoning = getattr(resp.choices[0].delta, "reasoning_content", None) or getattr(resp.choices[0].delta, "reasoning", None)
@@ -338,12 +347,20 @@ class Base(ABC):
                 tol = num_tokens_from_string(resp.choices[0].delta.content)
 
             finish_reason = resp.choices[0].finish_reason if hasattr(resp.choices[0], "finish_reason") else ""
+            if finish_reason in ("stop", "length", "tool_calls", "function_call", "content_filter"):
+                completed = True
             if finish_reason == "length":
                 if is_chinese(ans):
                     ans += LENGTH_NOTIFICATION_CN
                 else:
                     ans += LENGTH_NOTIFICATION_EN
             yield ans, tol
+
+        # A clean close (EOF) without a terminal finish_reason means the server
+        # dropped the stream early — a truncated answer, not a complete one. Raise so
+        # the caller surfaces an error instead of treating the partial text as done.
+        if not completed:
+            raise Exception("LLM stream ended without a completion signal; the response is incomplete")
 
     async def async_chat_streamly(self, system, history, gen_conf: dict | None = None, **kwargs):
         gen_conf = dict(gen_conf or {})

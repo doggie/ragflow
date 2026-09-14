@@ -46,6 +46,11 @@ import kbService, {
 import { restAPIv1 } from '@/utils/api';
 import { buildChunkHighlights } from '@/utils/document-util';
 import {
+  chunkUploadFiles,
+  createBatchUploadTracker,
+  UploadSpeedProgress,
+} from '@/utils/upload-batching';
+import {
   keepPreviousData,
   useMutation,
   useQuery,
@@ -54,7 +59,7 @@ import {
 import { useDebounce } from 'ahooks';
 import dayjs from 'dayjs';
 import { get } from 'lodash';
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { IHighlight } from 'react-pdf-highlighter';
 import { useParams } from 'react-router';
 import {
@@ -101,9 +106,165 @@ export const DocumentStructureKeys = {
     ] as const,
 };
 
+export interface IUploadBatchProgress extends UploadSpeedProgress {
+  current: number;
+  total: number;
+  stalled?: boolean;
+}
+
+const UPLOAD_CHECKPOINT_KEY = 'ragflow_upload_checkpoint';
+const UPLOAD_CRASH_LOG_KEY = 'ragflow_upload_crash_log';
+
+function saveUploadCrashLog(reason: string, details: any) {
+  try {
+    const entry = {
+      time: new Date().toISOString(),
+      reason,
+      details: typeof details === 'object' ? (details?.stack || details?.message || JSON.stringify(details)) : String(details),
+    };
+    const raw = localStorage.getItem(UPLOAD_CRASH_LOG_KEY);
+    const list = raw ? JSON.parse(raw) : [];
+    list.unshift(entry);
+    localStorage.setItem(UPLOAD_CRASH_LOG_KEY, JSON.stringify(list.slice(0, 30)));
+  } catch {
+    // Ignore localStorage write failure
+  }
+}
+
+function saveUploadCheckpoint(checkpoint: {
+  datasetId: string;
+  batchIndex: number;
+  totalBatches: number;
+  uploadedCount: number;
+  totalFiles: number;
+  status: 'uploading' | 'completed' | 'failed';
+  lastBatchNames?: string[];
+} | null) {
+  try {
+    if (!checkpoint) {
+      localStorage.removeItem(UPLOAD_CHECKPOINT_KEY);
+    } else {
+      localStorage.setItem(UPLOAD_CHECKPOINT_KEY, JSON.stringify({ ...checkpoint, updatedAt: Date.now() }));
+    }
+  } catch {
+    // Ignore
+  }
+}
+
+/**
+ * Isolated batch execution helper.
+ * Extracted as a standalone function outside the generator loop to prevent Terser /
+ * esbuild identifier collisions (e.g. `s` and `p` reuse across yield points) in
+ * production transpiled bundles.
+ */
+async function uploadSingleDatasetBatch(
+  datasetId: string,
+  batchFiles: File[],
+  batchIndex: number,
+  totalBatches: number,
+  parserConfig: Record<string, any> | undefined,
+  onProgress: (info: UploadSpeedProgress) => void,
+): Promise<{
+  ok: boolean;
+  data: IDocumentInfo[];
+  message?: string;
+}> {
+  const batchBytes = batchFiles.reduce((acc, f: any) => acc + (f.size || 0), 0);
+  const batchBytesMb = (batchBytes / 1024 / 1024).toFixed(2);
+  const tracker = createBatchUploadTracker(batchFiles);
+  const startTime = performance.now();
+
+  console.info(
+    `[UploadDocument] [Batch ${batchIndex}/${totalBatches}] Sending ${batchFiles.length} files (${batchBytesMb} MB)...`,
+    batchFiles.map((f: any) => ({ name: f.name, size: f.size })),
+  );
+
+  const formData = new FormData();
+  batchFiles.forEach((file: any) => {
+    formData.append('file', file);
+  });
+  if (parserConfig) {
+    formData.append('parser_config', JSON.stringify(parserConfig));
+  }
+
+  let lastLoggedPercent = 0;
+  try {
+    const ret = await uploadDocument(datasetId, formData, {
+      onUploadProgress: (progressEvent) => {
+        const loaded = progressEvent.loaded || 0;
+        const total = progressEvent.total || 0;
+        const trackInfo = tracker(loaded, total);
+        onProgress(trackInfo);
+
+        if (trackInfo.percent >= lastLoggedPercent + 25 || trackInfo.percent === 100) {
+          lastLoggedPercent = trackInfo.percent;
+          console.info(
+            `[UploadDocument] [Batch ${batchIndex}/${totalBatches}] Progress: ${trackInfo.percent}% (${(trackInfo.loadedBytes / 1024 / 1024).toFixed(1)} / ${(trackInfo.totalBytes / 1024 / 1024).toFixed(1)} MB, ${trackInfo.speedKbps} kB/s, current: ${trackInfo.currentFileName})`,
+          );
+        }
+      },
+    });
+
+    const elapsedSec = ((performance.now() - startTime) / 1000).toFixed(1);
+    const code = get(ret, 'code');
+    const batchNames = batchFiles.map((f: any) => f.name);
+    const respData = get(ret, 'data');
+    const respItems: IDocumentInfo[] = Array.isArray(respData) ? respData : [];
+
+    if (respItems.length === 0 && batchNames.length > 0 && code === 0) {
+      console.error(
+        `[UploadDocument] [Batch ${batchIndex}/${totalBatches}] SUSPICIOUS: server returned code 0 but 0 items for ${batchNames.length} files. Did not ingest this batch.`,
+      );
+      return {
+        ok: false,
+        data: [],
+        message: `[Batch ${batchIndex}/${totalBatches}] Server returned 0 items for ${batchNames.length} files`,
+      };
+    }
+
+    if (code !== 0) {
+      const errMsg = get(ret, 'message');
+      console.error(
+        `[UploadDocument] [Batch ${batchIndex}/${totalBatches}] FAILED with code ${code} after ${elapsedSec}s: ${errMsg}`,
+      );
+      return {
+        ok: false,
+        data: respItems,
+        message: errMsg || `[Batch ${batchIndex}/${totalBatches}] Error code ${code}`,
+      };
+    }
+
+    console.info(
+      `[UploadDocument] [Batch ${batchIndex}/${totalBatches}] SUCCESS in ${elapsedSec}s. Response items: ${respItems.length}`,
+    );
+    return {
+      ok: true,
+      data: respItems,
+      message: get(ret, 'message'),
+    };
+  } catch (batchErr) {
+    const elapsedSec = ((performance.now() - startTime) / 1000).toFixed(1);
+    console.error(
+      `[UploadDocument] [Batch ${batchIndex}/${totalBatches}] REJECTED after ${elapsedSec}s, continuing with remaining batches:`,
+      batchErr,
+    );
+    const errMsg =
+      batchErr && typeof batchErr === 'object' && 'message' in batchErr
+        ? (batchErr as any).message
+        : String(batchErr);
+    return {
+      ok: false,
+      data: [],
+      message: `[Batch ${batchIndex}/${totalBatches}] ${errMsg}`,
+    };
+  }
+}
+
 export const useUploadDocument = () => {
   const queryClient = useQueryClient();
   const { id } = useParams();
+  const [batchProgress, setBatchProgress] = useState<IUploadBatchProgress | null>(null);
+  const crashShield = useRef<{ errorHandler?: (e: ErrorEvent) => void; rejectionHandler?: (e: PromiseRejectionEvent) => void }>({});
 
   const {
     data,
@@ -117,36 +278,191 @@ export const useUploadDocument = () => {
     mutationKey: [DocumentApiAction.UploadDocument],
     mutationFn: async ({ fileList, parserConfig }) => {
       if (!id) {
-        return { code: 500, message: 'Dataset ID is required' };
+        return {
+          code: 500,
+          message: 'Dataset ID is required',
+        } as ResponseType<IDocumentInfo[]>;
       }
-      const formData = new FormData();
-      fileList.forEach((file: any) => {
-        formData.append('file', file);
+
+      // Send the selection as sequential sub-requests, each kept under the
+      // server's per-request body cap, so a large folder still uploads
+      // instead of being rejected with 413.
+      const batches = chunkUploadFiles(fileList);
+      const totalBytesAll = fileList.reduce((acc, f: any) => acc + (f.size || 0), 0);
+      console.info(
+        `[UploadDocument] Start uploading ${fileList.length} files (${(totalBytesAll / 1024 / 1024).toFixed(2)} MB) to dataset ${id} in ${batches.length} batches.`,
+      );
+
+      let allOk = true;
+      const uploaded: IDocumentInfo[] = [];
+      const messages: string[] = [];
+
+      // Crash & unhandled rejection safety net
+      const errorHandler = (e: ErrorEvent) => {
+        saveUploadCrashLog('window.error', {
+          message: e.message,
+          filename: e.filename,
+          lineno: e.lineno,
+          colno: e.colno,
+          error: e.error,
+        });
+      };
+      const rejectionHandler = (e: PromiseRejectionEvent) => {
+        saveUploadCrashLog('window.unhandledrejection', {
+          reason: e.reason,
+        });
+      };
+      window.addEventListener('error', errorHandler);
+      window.addEventListener('unhandledrejection', rejectionHandler);
+      crashShield.current = { errorHandler, rejectionHandler };
+
+      saveUploadCheckpoint({
+        datasetId: id,
+        batchIndex: 0,
+        totalBatches: batches.length,
+        uploadedCount: 0,
+        totalFiles: fileList.length,
+        status: 'uploading',
       });
-      if (parserConfig) {
-        formData.append('parser_config', JSON.stringify(parserConfig));
-      }
 
       try {
-        const ret = await uploadDocument(id, formData);
-        const code = get(ret, 'code');
+        for (let i = 0; i < batches.length; i++) {
+          const currentBatchFiles = batches[i];
+          const batchIndex = i + 1;
+          const currentBatchBytes = currentBatchFiles.reduce(
+            (acc, f: any) => acc + (f.size || 0),
+            0,
+          );
 
-        if (code === 0 || code === 500) {
-          // Await the refetch so the fresh list (including the just-uploaded
-          // documents) reaches the cache before callers optimistically mark
-          // them RUNNING. Otherwise the late refetch lands after the
-          // optimistic update, overwrites it, and polling never starts.
+          setBatchProgress({
+            current: batchIndex,
+            total: batches.length,
+            speedKbps: 0,
+            currentFileName: currentBatchFiles[0]?.name || '',
+            loadedBytes: 0,
+            totalBytes: currentBatchBytes,
+            percent: 0,
+            isServerProcessing: false,
+          });
+
+          // Stall watchdog: if a batch stays at 0 progress for > 20s, flag stalled in UI
+          let progressReceived = false;
+          const watchdogTimer = setTimeout(() => {
+            if (!progressReceived) {
+              console.warn(
+                `[UploadDocument] [Batch ${batchIndex}/${batches.length}] Watchdog: no progress event after 20s. Batch might be stalled or browser network throttled.`,
+              );
+              setBatchProgress((prev) =>
+                prev ? { ...prev, stalled: true } : prev,
+              );
+              saveUploadCrashLog('batch.stalled.20s', {
+                batchIndex,
+                totalBatches: batches.length,
+                files: currentBatchFiles.map((f: any) => ({ name: f.name, size: f.size })),
+              });
+            }
+          }, 20000);
+
+          let result;
+          try {
+            result = await uploadSingleDatasetBatch(
+              id,
+              currentBatchFiles,
+              batchIndex,
+              batches.length,
+              parserConfig,
+              (trackInfo) => {
+                progressReceived = true;
+                setBatchProgress({
+                  current: batchIndex,
+                  total: batches.length,
+                  stalled: false,
+                  ...trackInfo,
+                });
+              },
+            );
+          } finally {
+            clearTimeout(watchdogTimer);
+          }
+
+          if (!result.ok) {
+            allOk = false;
+          }
+          if (result.data.length > 0) {
+            uploaded.push(...result.data);
+          }
+          if (result.message) {
+            messages.push(result.message);
+          }
+
+          saveUploadCheckpoint({
+            datasetId: id,
+            batchIndex,
+            totalBatches: batches.length,
+            uploadedCount: uploaded.length,
+            totalFiles: fileList.length,
+            status: 'uploading',
+            lastBatchNames: currentBatchFiles.map((f: any) => f.name),
+          });
+
+          // Yield to the event loop between batches so the browser can drain
+          // queued XHR progress/load events, run GC on the File objects of the
+          // batch just sent, and repaint the progress text. Without this, heavy
+          // DOM + GC churn from the 2900-file list can starve the main thread
+          // and the next `onload` resolution never fires (the Batch-1 hang).
+          await new Promise((r) => setTimeout(r, 50));
+        }
+
+        saveUploadCheckpoint({
+          datasetId: id,
+          batchIndex: batches.length,
+          totalBatches: batches.length,
+          uploadedCount: uploaded.length,
+          totalFiles: fileList.length,
+          status: 'completed',
+        });
+
+        // Await the refetch so the fresh list (including the just-uploaded
+        // documents) reaches the cache before callers optimistically mark
+        // them RUNNING. Otherwise the late refetch lands after the
+        // optimistic update, overwrites it, and polling never starts.
+        if (uploaded.length > 0) {
           await queryClient.invalidateQueries({
             queryKey: DocumentKeys.all(),
           });
         }
-        return ret;
+
+        return {
+          code: allOk ? 0 : 500,
+          message: messages.join('\n'),
+          data: uploaded,
+        } as ResponseType<IDocumentInfo[]>;
       } catch (error) {
         console.warn(error);
+        saveUploadCrashLog('mutation.catch', error);
+        saveUploadCheckpoint({
+          datasetId: id,
+          batchIndex: 0,
+          totalBatches: batches.length,
+          uploadedCount: uploaded.length,
+          totalFiles: fileList.length,
+          status: 'failed',
+        });
         return {
           code: 500,
           message: error + '',
-        };
+        } as ResponseType<IDocumentInfo[]>;
+      } finally {
+        if (crashShield.current.errorHandler) {
+          window.removeEventListener('error', crashShield.current.errorHandler);
+        }
+        if (crashShield.current.rejectionHandler) {
+          window.removeEventListener(
+            'unhandledrejection',
+            crashShield.current.rejectionHandler,
+          );
+        }
+        setBatchProgress(null);
       }
     },
   });
@@ -157,7 +473,24 @@ export const useUploadDocument = () => {
     [mutateAsync],
   );
 
-  return { uploadDocument: upload, loading, data };
+  // Mount-time recovery notice if previous upload was interrupted
+  useEffect(() => {
+    try {
+      const raw = localStorage.getItem(UPLOAD_CHECKPOINT_KEY);
+      if (!raw) return;
+      const cp = JSON.parse(raw);
+      if (cp && cp.status === 'uploading' && cp.datasetId === id) {
+        console.warn('[UploadDocument] Detected interrupted upload checkpoint:', cp);
+        message.warning(
+          `偵測到上次上傳中斷於第 ${cp.batchIndex}/${cp.totalBatches} 批（已傳送 ${cp.uploadedCount} 個檔案），本次上傳將重新同步。`,
+        );
+      }
+    } catch {
+      // Ignore
+    }
+  }, [id]);
+
+  return { uploadDocument: upload, loading, data, batchProgress };
 };
 
 export const useFetchDocumentList = (loop = true) => {

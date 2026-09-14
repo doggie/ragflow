@@ -656,6 +656,8 @@ async def _upload_empty_document(dataset_id, kb, tenant_id):
 
 
 async def _upload_local_documents(kb, tenant_id):
+    import time
+    start_ts = time.time()
     form = await request.form
     files = await request.files
     if "file" not in files:
@@ -663,6 +665,12 @@ async def _upload_local_documents(kb, tenant_id):
         return get_error_data_result(message="No file part!", code=RetCode.ARGUMENT_ERROR)
 
     file_objs = files.getlist("file")
+    logging.info(
+        "[_upload_local_documents] Received batch of %d files for kb_id=%s, tenant_id=%s",
+        len(file_objs),
+        kb.id,
+        tenant_id,
+    )
     for file_obj in file_objs:
         if file_obj is None or file_obj.filename is None or file_obj.filename == "":
             logging.error("No file selected!")
@@ -694,6 +702,15 @@ async def _upload_local_documents(kb, tenant_id):
         tenant_id,
         parent_path=form.get("parent_path"),
         parser_config_override=parser_config_override,
+    )
+
+    elapsed_sec = time.time() - start_ts
+    logging.info(
+        "[_upload_local_documents] Finished batch of %d files in %.2fs (success=%d, err=%d)",
+        len(file_objs),
+        elapsed_sec,
+        len(files) if files else 0,
+        len(err) if err else 0,
     )
 
     # Handle partial success: some files uploaded successfully, some had errors

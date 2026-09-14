@@ -502,7 +502,9 @@ def chunk(filename, binary=None, from_page=0, to_page=MAXIMUM_TASK_PAGE_NUMBER, 
         reader = csv.reader(io.StringIO(txt), delimiter=delimiter)
         all_rows = list(reader)
         if not all_rows:
-            raise ValueError("Empty CSV file")
+            logging.info("Empty CSV file: %s, returning empty chunk list.", filename)
+            callback(0.8, "Empty CSV file.")
+            return []
 
         headers = all_rows[0]
         fails = []

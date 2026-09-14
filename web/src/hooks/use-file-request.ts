@@ -25,10 +25,17 @@ import {
   ConnectFileToKnowledgeMode,
   IConnectRequestBody,
 } from '@/interfaces/request/file-manager';
-import fileManagerService from '@/services/file-manager-service';
+import fileManagerService, {
+  uploadFileManagerFile,
+} from '@/services/file-manager-service';
 import api from '@/utils/api';
 import { downloadFileFromBlob } from '@/utils/file-util';
 import request from '@/utils/request';
+import {
+  chunkUploadFiles,
+  createBatchUploadTracker,
+  UploadSpeedProgress,
+} from '@/utils/upload-batching';
 import {
   useMutation,
   useQuery,
@@ -36,7 +43,7 @@ import {
   type QueryClient,
 } from '@tanstack/react-query';
 import { useDebounce } from 'ahooks';
-import { useCallback } from 'react';
+import { useCallback, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { useSearchParams } from 'react-router';
 import {
@@ -65,10 +72,17 @@ export const useGetFolderId = () => {
   return id ?? '';
 };
 
+export interface IFileUploadBatchProgress extends UploadSpeedProgress {
+  current: number;
+  total: number;
+}
+
 export const useUploadFile = () => {
   const { setPaginationParams } = useSetPaginationParams();
   const { t } = useTranslation();
   const queryClient = useQueryClient();
+  const [batchProgress, setBatchProgress] = useState<IFileUploadBatchProgress | null>(null);
+
   const {
     data,
     isPending: loading,
@@ -76,36 +90,124 @@ export const useUploadFile = () => {
   } = useMutation({
     mutationKey: [FileApiAction.UploadFile],
     mutationFn: async (params: { fileList: File[]; parentId: string }) => {
-      const fileList = params.fileList;
-      const pathList = params.fileList.map(
-        (file) => (file as any).webkitRelativePath,
+      // Carry each file's folder-relative path alongside it so batching keeps
+      // the file→path pairing intact.
+      const entries = params.fileList.map((file: any) => ({
+        file,
+        path: file.webkitRelativePath,
+      }));
+
+      // Send the selection as sequential sub-requests, each kept under the
+      // server's per-request body cap, so a large folder still uploads
+      // instead of being rejected with 413.
+      const batches = chunkUploadFiles(entries);
+
+      let allOk = true;
+      let anySucceeded = false;
+      let lastCode: number | undefined;
+      const totalBytesAll = params.fileList.reduce((acc, f: any) => acc + (f.file ? f.file.size : f.size || 0), 0);
+      console.info(
+        `[UploadFileManager] Start uploading ${params.fileList.length} files (${(totalBytesAll / 1024 / 1024).toFixed(2)} MB) to folder ${params.parentId} in ${batches.length} batches.`,
       );
-      const formData = new FormData();
-      formData.append('parent_id', params.parentId);
-      fileList.forEach((file: any, index: number) => {
-        // Explicitly set filename to file.name (base name) to prevent the
-        // browser from using webkitRelativePath (e.g. "folder/file.txt")
-        // which would cause the backend to create an extra folder.
-        formData.append('file', file, file.name);
-        formData.append('path', pathList[index]);
-      });
+
       try {
-        const ret = await fileManagerService.uploadFile(formData);
-        if (ret?.data.code === 0) {
+        for (let i = 0; i < batches.length; i++) {
+          const currentBatchFiles = batches[i];
+          const batchIndex = i + 1;
+          const batchBytes = currentBatchFiles.reduce((acc, f: any) => acc + (f.file ? f.file.size : f.size || 0), 0);
+          const batchBytesMb = (batchBytes / 1024 / 1024).toFixed(2);
+          const tracker = createBatchUploadTracker(currentBatchFiles);
+          const startTime = performance.now();
+
+          console.info(
+            `[UploadFileManager] [Batch ${batchIndex}/${batches.length}] Sending ${currentBatchFiles.length} files (${batchBytesMb} MB)...`,
+          );
+
+          setBatchProgress({
+            current: batchIndex,
+            total: batches.length,
+            speedKbps: 0,
+            currentFileName: currentBatchFiles[0]?.path || currentBatchFiles[0]?.file?.name || '',
+            loadedBytes: 0,
+            totalBytes: batchBytes,
+            percent: 0,
+            isServerProcessing: false,
+          });
+
+          const formData = new FormData();
+          formData.append('parent_id', params.parentId);
+          currentBatchFiles.forEach(({ file, path }) => {
+            // Explicitly set filename to file.name (base name) to prevent the
+            // browser from using webkitRelativePath (e.g. "folder/file.txt")
+            // which would cause the backend to create an extra folder.
+            formData.append('file', file, file.name);
+            formData.append('path', path);
+          });
+
+          let lastLoggedPercent = 0;
+          try {
+            const ret = await uploadFileManagerFile(formData, {
+              onUploadProgress: (progressEvent) => {
+                const loaded = progressEvent.loaded || 0;
+                const total = progressEvent.total || 0;
+                const trackInfo = tracker(loaded, total);
+                setBatchProgress({
+                  current: batchIndex,
+                  total: batches.length,
+                  ...trackInfo,
+                });
+
+                if (trackInfo.percent >= lastLoggedPercent + 25 || trackInfo.percent === 100) {
+                  lastLoggedPercent = trackInfo.percent;
+                  console.info(
+                    `[UploadFileManager] [Batch ${batchIndex}/${batches.length}] Progress: ${trackInfo.percent}% (${(trackInfo.loadedBytes / 1024 / 1024).toFixed(1)} / ${(trackInfo.totalBytes / 1024 / 1024).toFixed(1)} MB, ${trackInfo.speedKbps} kB/s, current: ${trackInfo.currentFileName})`,
+                  );
+                }
+              },
+            });
+            const elapsedSec = ((performance.now() - startTime) / 1000).toFixed(1);
+            const code = ret?.data?.code;
+            if (code === 0) {
+              anySucceeded = true;
+              console.info(
+                `[UploadFileManager] [Batch ${batchIndex}/${batches.length}] SUCCESS in ${elapsedSec}s.`,
+              );
+            } else {
+              allOk = false;
+              lastCode = code;
+              console.error(
+                `[UploadFileManager] [Batch ${batchIndex}/${batches.length}] FAILED with code ${code} after ${elapsedSec}s: ${ret?.data?.message}`,
+              );
+            }
+          } catch (batchErr) {
+            // Best effort: a failed batch is recorded and the rest continue.
+            const elapsedSec = ((performance.now() - startTime) / 1000).toFixed(1);
+            allOk = false;
+            console.error(
+              `[UploadFileManager] [Batch ${batchIndex}/${batches.length}] ERROR after ${elapsedSec}s:`,
+              batchErr,
+            );
+          }
+        }
+
+        // Run the success side-effects once (not per batch) so the user sees a
+        // single toast and one list refresh.
+        if (anySucceeded) {
           message.success(t('message.uploaded'));
           setPaginationParams(1);
           queryClient.invalidateQueries({
             queryKey: [FileApiAction.FetchFileList],
           });
         }
-        return ret?.data?.code;
-      } catch {
-        return;
+
+        return allOk ? 0 : lastCode;
+      } finally {
+        setBatchProgress(null);
       }
     },
   });
 
-  return { data, loading, uploadFile: mutateAsync };
+  return { data, loading, uploadFile: mutateAsync, batchProgress };
 };
 
 export interface IMoveFileBody {

@@ -28,6 +28,7 @@ interface IProps extends React.PropsWithChildren {
   documentId?: string;
   resource?: 'document' | 'files';
   className?: string;
+  onClick?: React.MouseEventHandler<HTMLAnchorElement>;
 }
 
 const NewDocumentLink = ({
@@ -39,6 +40,7 @@ const NewDocumentLink = ({
   documentName,
   resource = 'document',
   className,
+  onClick,
 }: IProps) => {
   let nextLink = link;
   const extension = getExtension(documentName);
@@ -46,14 +48,16 @@ const NewDocumentLink = ({
     nextLink = `/document/${documentId}?ext=${extension}&resource=${resource}`;
   }
 
+  const handleClick = (e: React.MouseEvent<HTMLAnchorElement>) => {
+    onClick?.(e);
+    if (!preventDefault || isSupportedPreviewDocumentType(extension)) return;
+    e.preventDefault();
+  };
+
   return (
     <a
       target="_blank"
-      onClick={
-        !preventDefault || isSupportedPreviewDocumentType(extension)
-          ? undefined
-          : (e) => e.preventDefault()
-      }
+      onClick={handleClick}
       href={nextLink}
       rel="noreferrer"
       style={{ color: className ? '' : color, wordBreak: 'break-all' }}
