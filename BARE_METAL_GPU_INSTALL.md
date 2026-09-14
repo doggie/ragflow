@@ -13,6 +13,8 @@
 > - `pyproject.toml` / `uv.lock` — `graspologic` 依賴 gitee → github
 > - `rag/llm/rerank_model.py` — rerank timeout 30 → 600(top_k=1024 需要)
 > - `rag/flow/parser/pdf_chunk_metadata.py` — chunk 預覽 crop 修復(見 §7.3)
+> - `rag/app/manual.py`、`rag/app/naive.py`、`rag/app/presentation.py` — 支援多格式動態橋接與 LibreOffice 無頭轉檔舊版 `.doc`/`.ppt`
+> - `web/` — 大資料夾批量上傳分片與中斷續傳模組 (支援數千檔案批量上傳)
 
 ---
 
@@ -65,7 +67,8 @@ sudo apt-get install -y \
   python3 python3-venv python3-pip \
   mysql-server mysql-client \
   redis-server \
-  unzip ca-certificates
+  unzip ca-certificates \
+  libreoffice
 
 # uv(RAGFlow 建議用 uv 建 venv)
 curl -LsSf https://astral.sh/uv/install.sh | sh
@@ -454,6 +457,7 @@ Group=nvidia
 WorkingDirectory=/mnt/ssd/code/ragflow
 Environment=PYTHONPATH=/mnt/ssd/code/ragflow
 Environment=PATH=/mnt/ssd/code/ragflow/.venv/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+Environment=MAX_FILE_NUM_PER_USER=20000
 ExecStart=/mnt/ssd/code/ragflow/.venv/bin/python api/ragflow_server.py --init-superuser
 Restart=on-failure
 RestartSec=10
