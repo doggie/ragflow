@@ -856,8 +856,8 @@ class UpdateDatasetReq(CreateDatasetReq):
     @field_validator("dataset_id", mode="before")
     @classmethod
     def validate_dataset_id(cls, v: Any) -> str:
-        """Validate and normalize the dataset id."""
-        return validate_uuid1_hex(v)
+        """Dataset IDs may be non-UUID identifiers; pass through as-is."""
+        return v
 
 
 class DeleteReq(Base):
@@ -943,7 +943,28 @@ class DeleteReq(Base):
 class DeleteDatasetReq(DeleteReq):
     """Request model for deleting datasets."""
 
-    ...
+    @field_validator("ids", mode="after")
+    @classmethod
+    def validate_ids(cls, v_list: list[str] | None) -> list[str] | None:
+        """
+        Validate dataset IDs without enforcing UUID format.
+
+        Datasets can use non-UUID identifiers (e.g., 'kb_admin_amr_fw'), so we only
+        enforce uniqueness here and leave existence checks to the delete API.
+        """
+        if v_list is None:
+            return None
+
+        duplicates = [item for item, count in Counter(v_list).items() if count > 1]
+        if duplicates:
+            duplicates_str = ", ".join(duplicates)
+            raise PydanticCustomError(
+                "duplicate_uuids",
+                "Duplicate ids: '{duplicate_ids}'",
+                {"duplicate_ids": duplicates_str},
+            )
+
+        return v_list
 
 
 class DeleteDocumentReq(DeleteReq):
@@ -1051,9 +1072,11 @@ class BaseListReq(BaseModel):
 
     @field_validator("id", mode="before")
     @classmethod
-    def validate_id(cls, v: Any) -> str:
-        """Validate and normalize an optional list filter id."""
-        return validate_uuid1_hex(v)
+    def validate_id(cls, v: Any) -> str | None:
+        """Validate an optional list filter id; non-UUID ids are allowed."""
+        if v is None:
+            return None
+        return v
 
     @field_validator("page_size")
     @classmethod
@@ -1074,15 +1097,11 @@ class ListDatasetReq(BaseListReq):
         if v_list is None:
             return None
 
-        ids_list = []
-        for v in v_list:
-            ids_list.append(validate_uuid1_hex(v))
-
-        duplicates = [item for item, count in Counter(ids_list).items() if count > 1]
+        duplicates = [item for item, count in Counter(v_list).items() if count > 1]
         if duplicates:
             raise PydanticCustomError("duplicate_uuids", "Duplicate ids: '{duplicate_ids}'", {"duplicate_ids": ", ".join(duplicates)})
 
-        return ids_list
+        return v_list
 
 
 # ---- File Management Request Models ----
