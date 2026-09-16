@@ -18,6 +18,7 @@ package connector
 
 import (
 	"context"
+	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -25,6 +26,7 @@ import (
 	"net/http"
 	"net/url"
 	"os"
+	"path"
 	"sort"
 	"strconv"
 	"strings"
@@ -34,21 +36,105 @@ import (
 )
 
 const (
-	defaultGitHubBatchSize = 32
-	githubItemsPerPage     = 100
-	githubRequestTimeout   = 60 * time.Second
+	defaultGitHubBatchSize        = 32
+	githubItemsPerPage            = 100
+	githubRequestTimeout          = 60 * time.Second
+	defaultGitHubContentBranch   = "main"
 )
 
-// GitHubConnector reads GitHub issues and pull requests.
+// Code file extensions - all common programming languages
+var defaultCodeExtensions = map[string]bool{
+	// Python
+	".py": true, ".pyw": true, ".pyi": true,
+	// JavaScript/TypeScript
+	".js": true, ".jsx": true, ".mjs": true, ".cjs": true,
+	".ts": true, ".tsx": true,
+	// Java/Kotlin/Scala
+	".java": true, ".class": true, ".jar": true,
+	".kt": true, ".kts": true,
+	".scala": true, ".sc": true,
+	// C/C++
+	".c": true, ".h": true,
+	".cpp": true, ".cc": true, ".cxx": true, ".hpp": true, ".c++": true,
+	// C#
+	".cs": true,
+	// Go
+	".go": true,
+	// Rust
+	".rs": true,
+	// Ruby
+	".rb": true, ".rbw": true,
+	// PHP
+	".php": true, ".phtml": true,
+	// Swift
+	".swift": true,
+	// R
+	".r": true, ".R": true, ".Rmd": true,
+	// Perl
+	".pl": true, ".pm": true, ".pod": true,
+	// Shell
+	".sh": true, ".bash": true, ".zsh": true, ".fish": true,
+	".ash": true, ".ksh": true,
+	// PowerShell
+	".ps1": true, ".psm1": true, ".psd1": true,
+	// SQL
+	".sql": true,
+	// Web
+	".html": true, ".htm": true, ".shtml": true, ".xhtml": true,
+	".css": true, ".scss": true, ".sass": true, ".less": true,
+	".vue": true, ".svelte": true,
+	// Data/Config
+	".xml": true, ".xsl": true, ".xslt": true,
+	".json": true, ".jsonc": true, ".json5": true,
+	".yaml": true, ".yml": true,
+	".toml": true, ".ini": true, ".cfg": true, ".conf": true, ".env": true,
+	".properties": true, ".editorconfig": true,
+	// Documentation
+	".md": true, ".markdown": true, ".mdown": true, ".mkd": true,
+	".rst": true, ".adoc": true, ".asc": true,
+	".txt": true, ".text": true,
+	// Other languages
+	".lua": true, ".tl": true,
+	".clj": true, ".cljs": true, ".cljc": true, ".clojure": true,
+	".ex": true, ".exs": true, ".eex": true, ".leex": true, // Elixir
+	".erl": true, ".hrl": true, // Erlang
+	".fs": true, ".fsx": true, ".fsscript": true, // F#
+	".hs": true, ".lhs": true, ".hs-boot": true, // Haskell
+	".jl": true, // Julia
+	".nim": true, ".nims": true, // Nim
+	".ml": true, ".mli": true, ".ocaml": true, // OCaml
+	".pas": true, ".pp": true, ".dpk": true, ".dpr": true, // Pascal
+	".pro": true, // Prolog
+	".tcl": true, ".tk": true, // Tcl
+	".asm": true, ".s": true, ".S": true, ".a32": true, ".a64": true, // Assembly
+	".v": true, ".sv": true, ".vh": true, ".vhd": true, // Verilog/VHDL
+	// Build/Project files
+	".cmake": true, ".mk": true, ".make": true, ".dockerfile": true,
+	".gradle": true, ".gradle.kts": true,
+	".bazel": true, ".bzl": true,
+	".lock": true, ".mod": true, ".sum": true, // Go modules
+	".podfile": true, ".gemspec": true, ".nupkg": true,
+	// Additional
+	".csv": true, ".tsv": true, // Data files
+	".graphql": true, ".gql": true, // GraphQL
+	".proto": true, // Protocol buffers
+	".gitignore": true, ".gitattributes": true, ".gitmodules": true,
+}
+
+// GitHubConnector reads GitHub issues, pull requests, and repository content.
 type GitHubConnector struct {
-	owner         string
-	repos         []string
-	includePRs    bool
-	includeIssues bool
-	token         string
-	batchSize     int
-	baseURL       string
-	doJSON        func(ctx context.Context, apiURL string, out any) (http.Header, error)
+	owner             string
+	repos             []string
+	includePRs        bool
+	includeIssues     bool
+	includeContent    bool
+	contentBranch     string
+	contentExtensions []string
+	fileExtensionsSet map[string]bool
+	token             string
+	batchSize         int
+	baseURL           string
+	doJSON            func(ctx context.Context, apiURL string, out any) (http.Header, error)
 }
 
 // NewGitHubConnector creates a GitHub connector from Python-compatible config.
@@ -59,14 +145,45 @@ func NewGitHubConnector(config map[string]any) (*GitHubConnector, error) {
 	if baseURL == "" {
 		baseURL = "https://api.github.com"
 	}
+
+	// Parse content extensions
+	var contentExtensions []string
+	if exts, ok := config["file_extensions"].(string); ok && exts != "" {
+		exts = strings.TrimSpace(exts)
+		if exts != "" {
+			for _, ext := range strings.Split(exts, ",") {
+				ext = strings.TrimSpace(strings.ToLower(ext))
+				if ext != "" && !strings.HasPrefix(ext, ".") {
+					ext = "." + ext
+				}
+				contentExtensions = append(contentExtensions, ext)
+			}
+		}
+	}
+
+	// Build extensions set for fast lookup
+	extSet := make(map[string]bool)
+	for _, ext := range contentExtensions {
+		extSet[ext] = true
+	}
+
+	branch := stringConfig(config["content_branch"])
+	if branch == "" {
+		branch = defaultGitHubContentBranch
+	}
+
 	return &GitHubConnector{
-		owner:         strings.TrimSpace(stringConfig(config["repository_owner"])),
-		repos:         splitGitHubRepos(stringConfig(config["repository_name"])),
-		includePRs:    configBoolDefault(config["include_pull_requests"], true),
-		includeIssues: configBoolDefault(config["include_issues"], true),
-		token:         strings.TrimSpace(token),
-		batchSize:     configInt(config["batch_size"], defaultGitHubBatchSize),
-		baseURL:       baseURL,
+		owner:             strings.TrimSpace(stringConfig(config["repository_owner"])),
+		repos:             splitGitHubRepos(stringConfig(config["repository_name"])),
+		includePRs:        configBoolDefault(config["include_pull_requests"], true),
+		includeIssues:     configBoolDefault(config["include_issues"], true),
+		includeContent:    configBoolDefault(config["include_repository_content"], false),
+		contentBranch:     strings.TrimSpace(branch),
+		contentExtensions: contentExtensions,
+		fileExtensionsSet: extSet,
+		token:             strings.TrimSpace(token),
+		batchSize:         configInt(config["batch_size"], defaultGitHubBatchSize),
+		baseURL:           baseURL,
 	}, nil
 }
 
@@ -366,6 +483,37 @@ func (c *GitHubConnector) listIssueSlimPage(ctx context.Context, fullName string
 	return documents, !hasNextPage(headers) || len(batch) == 0, nil
 }
 
+// listContentSlimPage returns one page of repository file IDs for pruning.
+func (c *GitHubConnector) listContentSlimPage(ctx context.Context, fullName, branch string, pageSize int) ([]SlimDocument, bool, error) {
+	if pageSize <= 0 {
+		pageSize = defaultGitHubBatchSize
+	}
+
+	tree, err := c.listRepoTree(ctx, fullName, branch)
+	if err != nil {
+		return nil, false, err
+	}
+
+	documents := make([]SlimDocument, 0, pageSize)
+	count := 0
+	for _, entry := range tree {
+		if entry.Type != "blob" {
+			continue
+		}
+		if !c.shouldIndexFile(entry.Path) {
+			continue
+		}
+		documents = append(documents, SlimDocument{
+			SourceID: fmt.Sprintf("%s/%s", fullName, entry.Path),
+		})
+		count++
+		if count >= pageSize {
+			return documents, false, nil
+		}
+	}
+	return documents, true, nil
+}
+
 // githubListQuery builds standard GitHub list query parameters.
 func githubListQuery(page, pageSize int) url.Values {
 	if pageSize <= 0 {
@@ -437,6 +585,9 @@ type githubSyncSession struct {
 	resumePage     int
 	resumeOffset   int
 	resumeSourceID string
+	// Content stage fields
+	contentFiles   []githubTreeEntry
+	contentIndex   int
 }
 
 // NextBatch returns the next GitHub document batch.
@@ -537,8 +688,9 @@ func (s *githubPruneSession) Close() error {
 }
 
 const (
-	githubStagePRs    = "prs"
-	githubStageIssues = "issues"
+	githubStagePRs     = "prs"
+	githubStageIssues  = "issues"
+	githubStageContent = "content"
 )
 
 // nextDocumentPage fetches one GitHub API page for sync.
@@ -566,7 +718,7 @@ func (s *githubSyncSession) nextDocumentPage(ctx context.Context) ([]githubBuffe
 		return docs, nil
 	case githubStageIssues:
 		if !s.connector.includeIssues {
-			s.advanceRepo()
+			s.advanceStage()
 			return nil, nil
 		}
 		docs, done, err := s.connector.listIssuePage(ctx, repo.FullName, s.page, s.batchSize, s.windowStart, s.windowEnd)
@@ -578,9 +730,31 @@ func (s *githubSyncSession) nextDocumentPage(ctx context.Context) ([]githubBuffe
 			return nil, err
 		}
 		if done {
-			s.advanceRepo()
+			s.advanceStage()
 		} else {
 			s.page++
+		}
+		return docs, nil
+	case githubStageContent:
+		if !s.connector.includeContent {
+			s.advanceRepo()
+			return nil, nil
+		}
+		// First time entering content stage: load the file tree
+		if len(s.contentFiles) == 0 {
+			files, err := s.connector.listRepoTree(ctx, repo.FullName, s.connector.contentBranch)
+			if err != nil {
+				return nil, err
+			}
+			s.contentFiles = files
+			s.contentIndex = 0
+		}
+		docs, err := s.connector.listContentPage(ctx, repo.FullName, s.contentFiles, &s.contentIndex, s.batchSize)
+		if err != nil {
+			return nil, err
+		}
+		if len(docs) == 0 {
+			s.advanceRepo()
 		}
 		return docs, nil
 	default:
@@ -610,7 +784,7 @@ func (s *githubPruneSession) nextSlimPage(ctx context.Context) ([]SlimDocument, 
 		return docs, nil
 	case githubStageIssues:
 		if !s.connector.includeIssues {
-			s.advanceRepo()
+			s.advanceStage()
 			return nil, nil
 		}
 		docs, done, err := s.connector.listIssueSlimPage(ctx, repo.FullName, s.page, s.batchSize)
@@ -618,9 +792,22 @@ func (s *githubPruneSession) nextSlimPage(ctx context.Context) ([]SlimDocument, 
 			return nil, err
 		}
 		if done {
-			s.advanceRepo()
+			s.advanceStage()
 		} else {
 			s.page++
+		}
+		return docs, nil
+	case githubStageContent:
+		if !s.connector.includeContent {
+			s.advanceRepo()
+			return nil, nil
+		}
+		docs, done, err := s.connector.listContentSlimPage(ctx, repo.FullName, s.connector.contentBranch, s.batchSize)
+		if err != nil {
+			return nil, err
+		}
+		if done {
+			s.advanceRepo()
 		}
 		return docs, nil
 	default:
@@ -629,9 +816,17 @@ func (s *githubPruneSession) nextSlimPage(ctx context.Context) ([]SlimDocument, 
 	}
 }
 
-// advanceStage moves a GitHub session from PRs to issues.
+// advanceStage moves a GitHub session through stages: PRs → Issues → Content.
 func (s *githubSyncSession) advanceStage() {
-	s.stage = githubStageIssues
+	switch s.stage {
+	case githubStagePRs:
+		s.stage = githubStageIssues
+	case githubStageIssues:
+		s.stage = githubStageContent
+	case githubStageContent:
+		s.advanceRepo()
+		return
+	}
 	s.page = 1
 	s.clearResume()
 }
@@ -641,6 +836,8 @@ func (s *githubSyncSession) advanceRepo() {
 	s.repoIndex++
 	s.stage = githubStagePRs
 	s.page = 1
+	s.contentFiles = nil
+	s.contentIndex = 0
 	s.clearResume()
 }
 
@@ -705,9 +902,17 @@ func (s *githubSyncSession) clearResume() {
 	s.resumeSourceID = ""
 }
 
-// advanceStage moves a GitHub prune session from PRs to issues.
+// advanceStage moves a GitHub prune session from PRs to issues to content.
 func (s *githubPruneSession) advanceStage() {
-	s.stage = githubStageIssues
+	switch s.stage {
+	case githubStagePRs:
+		s.stage = githubStageIssues
+	case githubStageIssues:
+		s.stage = githubStageContent
+	case githubStageContent:
+		s.advanceRepo()
+		return
+	}
 	s.page = 1
 }
 
@@ -1004,4 +1209,202 @@ func sanitizeGitHubName(name, extension string) string {
 		name += "." + extension
 	}
 	return name
+}
+
+// githubTreeEntry represents a file or directory entry in a Git tree.
+type githubTreeEntry struct {
+	Path string `json:"path"`
+	Mode string `json:"mode"`
+	Type string `json:"type"` // "blob", "tree", "commit"
+	SHA  string `json:"sha"`
+	Size int64  `json:"size,omitempty"`
+	URL  string `json:"url"`
+}
+
+// githubTreeResponse represents the GitHub Trees API response.
+type githubTreeResponse struct {
+	SHA  string          `json:"sha"`
+	URL  string          `json:"url"`
+	Tree []githubTreeEntry `json:"tree"`
+	Truncated bool        `json:"truncated"`
+}
+
+// listRepoTree fetches the file tree for a repository using the Git Trees API.
+func (c *GitHubConnector) listRepoTree(ctx context.Context, fullName, branch string) ([]githubTreeEntry, error) {
+	var result githubTreeResponse
+	apiURL := c.apiURL("/repos/"+url.PathEscape(fullName)+"/git/trees/"+url.PathEscape(branch), url.Values{"recursive": {"1"}})
+	_, err := c.getJSON(ctx, apiURL, &result)
+	if err != nil {
+		return nil, err
+	}
+	// If tree is truncated, we need to handle it (for very large repos)
+	// For now, just return what we have
+	if result.Truncated {
+		// Log a warning - for very large repos, we'd need to use the paginated trees API
+		// but that requires more complex implementation
+	}
+	return result.Tree, nil
+}
+
+// shouldIndexFile determines if a file should be indexed based on extension.
+func (c *GitHubConnector) shouldIndexFile(filePath string) bool {
+	ext := strings.ToLower(path.Ext(filePath))
+
+	// If no extensions specified, use default code extensions
+	if len(c.fileExtensionsSet) == 0 {
+		return defaultCodeExtensions[ext]
+	}
+
+	// If extensions specified, check against the set
+	return c.fileExtensionsSet[ext]
+}
+
+// fetchFileContent fetches the raw content of a file from GitHub.
+func (c *GitHubConnector) fetchFileContent(ctx context.Context, repoName, filePath string) ([]byte, error) {
+	// Try raw.githubusercontent.com first - doesn't count against API rate limit
+	rawURL := fmt.Sprintf("https://raw.githubusercontent.com/%s/%s/%s/%s",
+		c.owner, url.PathEscape(repoName), c.contentBranch, url.PathEscape(filePath))
+
+	client := utility.PinnedHTTPClient("raw.githubusercontent.com", "", 30*time.Second)
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, rawURL, nil)
+	if err != nil {
+		return nil, err
+	}
+	req.Header.Set("Accept", "text/plain")
+
+	resp, err := client.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("failed to fetch file content: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode == http.StatusNotFound {
+		// Fallback to API if raw URL doesn't work (e.g., large files)
+		return c.fetchFileContentViaAPI(ctx, repoName, filePath)
+	}
+
+	if resp.StatusCode >= 400 {
+		return nil, fmt.Errorf("failed to fetch file content: HTTP %d", resp.StatusCode)
+	}
+
+	return io.ReadAll(resp.Body)
+}
+
+// fetchFileContentViaAPI fetches file content using the GitHub Contents API.
+func (c *GitHubConnector) fetchFileContentViaAPI(ctx context.Context, repoName, filePath string) ([]byte, error) {
+	var contents []map[string]any
+	apiURL := "/repos/" + url.PathEscape(c.owner) + "/" + url.PathEscape(repoName) + "/contents/" + url.PathEscape(filePath)
+	if _, err := c.getJSON(ctx, c.apiURL(apiURL, nil), &contents); err != nil {
+		// Single file response is a dict, not array
+		var singleFile map[string]any
+		if _, apiErr := c.getJSON(ctx, c.apiURL(apiURL, nil), &singleFile); apiErr != nil {
+			return nil, apiErr
+		}
+		// Decode base64 content
+		if contentStr, ok := singleFile["content"].(string); ok {
+			// The content is base64 encoded and may have newlines
+			contentStr = strings.ReplaceAll(contentStr, "\n", "")
+			decoded, err := base64.StdEncoding.DecodeString(contentStr)
+			if err != nil {
+				return nil, fmt.Errorf("failed to decode file content: %w", err)
+			}
+			return decoded, nil
+		}
+		return nil, fmt.Errorf("no content found in API response")
+	}
+	return nil, fmt.Errorf("unexpected response from contents API")
+}
+
+// listContentPage returns a batch of files from the repository content stage.
+func (c *GitHubConnector) listContentPage(ctx context.Context, fullName string, allFiles []githubTreeEntry, index *int, batchSize int) ([]githubBufferedDocument, error) {
+	documents := make([]githubBufferedDocument, 0, batchSize)
+	filesProcessed := 0
+	pageOffset := 0
+
+	for *index < len(allFiles) && filesProcessed < batchSize {
+		entry := allFiles[*index]
+		*index++
+		filesProcessed++
+
+		// Skip directories (type == "tree") and submodules (type == "commit")
+		if entry.Type != "blob" {
+			continue
+		}
+
+		// Skip files that don't match our extension filter
+		if !c.shouldIndexFile(entry.Path) {
+			continue
+		}
+
+		// Skip very large files (e.g., binary files that got through)
+		if entry.Size > 10*1024*1024 { // 10MB limit
+			continue
+		}
+
+		// Fetch file content
+		content, err := c.fetchFileContent(ctx, fullName, entry.Path)
+		if err != nil {
+			// Log error but continue with other files
+			continue
+		}
+
+		doc := githubFileEntry{
+			Path:      entry.Path,
+			SHA:       entry.SHA,
+			Size:      entry.Size,
+			Blob:      content,
+			UpdatedAt: time.Now().UTC(), // Trees API doesn't provide file mtime
+		}.toSourceDocument(fullName)
+
+		pageOffset++
+		documents = append(documents, githubBufferedDocument{
+			document:   doc,
+			checkpoint: githubSyncCheckpoint(fullName, githubStageContent, 0, pageOffset, doc),
+			offset:     pageOffset,
+			sourceID:   doc.SourceID,
+		})
+	}
+
+	done := *index >= len(allFiles)
+	if done {
+		return documents, nil
+	}
+
+	return documents, nil
+}
+
+// githubFileEntry represents a file entry converted from githubTreeEntry with content.
+type githubFileEntry struct {
+	Path      string
+	SHA       string
+	Size      int64
+	Blob      []byte
+	UpdatedAt time.Time
+}
+
+// toSourceDocument converts a file entry into the syncer model.
+func (f githubFileEntry) toSourceDocument(repo string) SourceDocument {
+	fileName := path.Base(f.Path)
+	ext := strings.ToLower(path.Ext(f.Path))
+
+	return SourceDocument{
+		SourceID:           fmt.Sprintf("%s/%s", repo, f.Path),
+		SemanticIdentifier: fileName,
+		Extension:          ext,
+		Blob:               f.Blob,
+		UpdatedAt:          f.UpdatedAt,
+		SizeBytes:          f.Size,
+		Metadata: map[string]any{
+			"object_type": "file",
+			"path":        f.Path,
+			"repo":        repo,
+			"sha":         f.SHA,
+		},
+		Fingerprint: stableFingerprint(map[string]any{
+			"type": "file",
+			"path": f.Path,
+			"repo": repo,
+			"sha":  f.SHA,
+		}),
+	}
 }

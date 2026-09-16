@@ -330,11 +330,11 @@ The BigQuery data source is used to synchronize table records or query results i
 
 ## GitHub
 
-The GitHub data source is used to synchronize issues and pull requests in GitHub repositories to a RAGFlow knowledge base. After configuration, open-source project materials, development discussions, and issue handling records can be queried.
+The GitHub data source is used to synchronize issues, pull requests, and repository code content in GitHub repositories to a RAGFlow knowledge base. After configuration, open-source project materials, development discussions, issue handling records, and source code files can be queried.
 
-**Permission requirements**: The GitHub token must have read permissions for the target repositories, issues, and pull requests.
+**Permission requirements**: The GitHub token must have read permissions for the target repositories, issues, pull requests, and repository code (if code indexing is enabled).
 
-**Account version requirements**: Both personal repositories and organization repositories can be used. Organization private repositories require the token to have read permissions for the corresponding repositories, issues, and pull requests.
+**Account version requirements**: Both personal repositories and organization repositories can be used. Organization private repositories require the token to have read permissions for the corresponding repositories, issues, pull requests, and code content.
 
 **Configuration parameters**:
 
@@ -344,6 +344,9 @@ The GitHub data source is used to synchronize issues and pull requests in GitHub
 - **GitHub access token**: Fill in the GitHub access token.
 - **Include Pull Requests**: Select whether to synchronize pull requests.
 - **Include Issues**: Select whether to synchronize issues.
+- **Include Repository Code Content**: Select whether to synchronize repository source code files. When enabled, the connector will index files from the repository's code branch.
+- **Code Branch**: The branch name to use when retrieving repository code files (default: main). Only applicable when Include Repository Code Content is enabled.
+- **Code File Extensions**: File extensions to include when indexing code files (e.g., .py,.js,.ts,.go,.java,.cpp,.c,.h,.md,.txt,.yaml,.yml,.json,.xml,.sh). Only applicable when Include Repository Code Content is enabled.
 - **Sync deleted files**: After this is enabled, content deleted from the external system is removed from the knowledge base index.
 
 ![GitHub](https://raw.githubusercontent.com/infiniflow/ragflow-docs/2ee87008723d56cb6ebf0e9c92f6ef2ad1a45254/images/GitHub.jpg)

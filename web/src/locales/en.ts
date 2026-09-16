@@ -1459,6 +1459,9 @@ This auto-tagging feature enhances retrieval by adding another layer of domain-s
       dataSourceIncludeMergeRequests: 'Include Merge Requests',
       dataSourceIncludeIssues: 'Include Issues',
       dataSourceIncludeCodeFiles: 'Include Code Files',
+      dataSourceFieldIncludeRepositoryContent: 'Include Repository Code Content',
+      dataSourceFieldContentBranch: 'Code Branch',
+      dataSourceFieldFileExtensions: 'Code File Extensions',
       // Data source form options
       dataSourceOptionAccountKey: 'Account Key',
       dataSourceOptionConnectionString: 'Connection String',

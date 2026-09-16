@@ -1393,6 +1393,29 @@ const generateDataSourceFormFields = (t: TFunction) => ({
       required: false,
       defaultValue: true,
     },
+    {
+      label: t('setting.dataSourceFieldIncludeRepositoryContent'),
+      name: 'config.include_repository_content',
+      type: FormFieldType.Checkbox,
+      required: false,
+      defaultValue: false,
+    },
+    {
+      label: t('setting.dataSourceFieldContentBranch'),
+      name: 'config.content_branch',
+      type: FormFieldType.Text,
+      required: false,
+      defaultValue: 'main',
+      placeholder: 'main',
+    },
+    {
+      label: t('setting.dataSourceFieldFileExtensions'),
+      name: 'config.file_extensions',
+      type: FormFieldType.Text,
+      required: false,
+      placeholder:
+        '.py,.js,.go,.md,.txt (empty=all code files)',
+    },
   ],
   [DataSourceKey.IMAP]: [
     {

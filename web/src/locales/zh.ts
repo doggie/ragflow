@@ -1453,6 +1453,9 @@ NER：使用 spaCy NER 和基于规则的关键词提取来抽取 Entities 和 R
       dataSourceIncludeMergeRequests: '包含合并请求（MR）',
       dataSourceIncludeIssues: '包含 Issues',
       dataSourceIncludeCodeFiles: '包含代码文件',
+      dataSourceFieldIncludeRepositoryContent: '包含仓库代码内容',
+      dataSourceFieldContentBranch: '代码分支',
+      dataSourceFieldFileExtensions: '代码文件扩展名',
       // Data source form options
       dataSourceOptionAccountKey: '账户密钥',
       dataSourceOptionConnectionString: '连接字符串',
