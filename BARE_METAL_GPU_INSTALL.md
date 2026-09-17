@@ -15,6 +15,9 @@
 > - `rag/flow/parser/pdf_chunk_metadata.py` — chunk 預覽 crop 修復(見 §7.3)
 > - `rag/app/manual.py`、`rag/app/naive.py`、`rag/app/presentation.py` — 支援多格式動態橋接與 LibreOffice 無頭轉檔舊版 `.doc`/`.ppt`
 > - `web/` — 大資料夾批量上傳分片與中斷續傳模組 (支援數千檔案批量上傳)
+> - `web/src/pages/document-viewer/`、`web/src/components/document-preview/`、`web/src/constants/common.ts` — 支援程式碼與設定檔（`.py`、`.js`、`.ts`、`.go`、`.java`、`.cpp`、`.sh`、`.yaml`、`.json` 等）直接於 Document Viewer 預覽（見 §7.4）
+> - `internal/syncer/connector/github.go` — GitHub Connector 同步相容性修正（自動解析 `owner/repo`、修復 raw URL 多重 owner 前綴及 tree API 跳脫問題，見 §7.5）
+> - `rag/llm/chat_model.py` — 修正自建 OpenAI 相容端點（如 llama.cpp）對 Qwen3 `chat_template_kwargs` 與 o1/o3/gpt-5 參數的相容性（見 §7.6）
 
 ---
 
@@ -336,6 +339,23 @@ ls dist/index.html   # 預期存在
 > 版面偵測給出的 top 超出頁面高度時 PIL `crop()` 會炸 → chunking 階段 `Internal server error while chunking`。
 > 本 repo 已修:top/bottom 都 clamp 到 `[0, page_h]`,並包 try/except 跳過無效 bbox。
 > 從上游原版 clone 才需手動套(可參考本 repo `rag/flow/parser/pdf_chunk_metadata.py` 的 crop loop)。
+
+### 7.4 (本 repo 已修)Document Viewer 程式碼與文字檔案預覽空白修復
+> 原生 RAGFlow 前端路由僅支援 office/pdf/txt，開啟 `.py`、`.js`、`.ts`、`.go`、`.sh`、`.yaml` 等原始碼與配置檔時畫面會整頁空白。
+> 本 repo 已修：在 `web/src/constants/common.ts` 擴充 `CodeExtensions` 並納入 `ExceptiveType` 與 `SupportedPreviewDocumentTypes`；
+> 在 `web/src/pages/document-viewer/index.tsx` 與 `web/src/components/document-preview/index.tsx` 整合純文字與代碼預覽器（`TxtPreviewer`）。
+
+### 7.5 (本 repo 已修)GitHub Connector 同步失敗與 URL 拼接修復
+> 上游 Go syncer (`internal/syncer/connector/github.go`) 僅解析分開的 owner/repo 配置，且在取得檔案 raw URL 時重複疊加 owner 前綴造成 404；同時 `listRepoTree` 對 repo 路徑中的斜線做了錯誤的 URL Escape。
+> 本 repo 已修：
+> 1. 自動相容 `repo: "owner/repo"` 格式並自動提取 owner 與 repo name。
+> 2. 下載 raw 內容時自動校正並去除重複的 owner 前綴。
+> 3. 分開跳脫 owner 與 repo 名稱，確保 Git Tree API 正確回應。
+
+### 7.6 (本 repo 已修)自建 LLM (llama.cpp) 與推理模型 (o1/o3/gpt-5) 參數相容性
+> 上游 `rag/llm/chat_model.py` 在調用 Qwen3 模型時會無條件注入 `chat_template_kwargs.enable_thinking`，造成標準 `llama-server` 等自建端點報 400 錯誤。
+> 同時調用部分新一代推理模型（如 gpt-5、o1、o3）時，若帶有 `temperature`、`presence_penalty`、`top_p` 會被 API 拒絕。
+> 本 repo 已修：針對自建 OpenAI 相容服務預設不注入未知 template 參數，並對推理模型過濾不支援的 penalty/sampling 參數。
 
 ---
 

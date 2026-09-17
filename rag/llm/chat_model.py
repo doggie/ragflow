@@ -167,28 +167,39 @@ def _apply_model_family_policies(
     # Qwen3 keeps RAGFlow's system default of disabling thinking unless explicitly overridden.
     if "qwen3" in model_name_lower:
         _pop_thinking_controls()
-        # -preview variants (e.g. qwen3.8-max-preview) and the flagship
-        # reasoning model qwen3.8-2.4t-a95b only accept
-        # enable_thinking=True; the API rejects any other value.
-        if "-preview" in model_name_lower or "2.4t-a95b" in model_name_lower:
-            enable_thinking = True
+        # For OpenAI-compatible / self-hosted servers (llama.cpp, etc. with backend="base"),
+        # do not inject chat_template_kwargs unless explicitly requested, since standard
+        # llama-server rejects unknown chat_template_kwargs with 400 invalid_request_error.
+        if backend == "base" and not thinking_type:
+            pass
         else:
-            enable_thinking = thinking_type == "enabled" if thinking_type else False
-        if backend == "litellm" and provider in {
-            SupportedLiteLLMProvider.Tongyi_Qianwen,
-            SupportedLiteLLMProvider.Dashscope,
-        }:
-            sanitized_gen_conf["enable_thinking"] = enable_thinking
-        else:
-            target = sanitized_gen_conf if backend == "litellm" else sanitized_kwargs
-            _merge_qwen_chat_template_kwargs(target, enable_thinking)
-            logger.debug(
-                "Applied Qwen3 thinking policy: backend=%s provider=%s enable_thinking=%s payload_path=%s",
-                backend,
-                provider,
-                enable_thinking,
-                "extra_body.chat_template_kwargs.enable_thinking",
-            )
+            # -preview variants (e.g. qwen3.8-max-preview) and the flagship
+            # reasoning model qwen3.8-2.4t-a95b only accept
+            # enable_thinking=True; the API rejects any other value.
+            if "-preview" in model_name_lower or "2.4t-a95b" in model_name_lower:
+                enable_thinking = True
+            else:
+                enable_thinking = thinking_type == "enabled" if thinking_type else False
+            if backend == "litellm" and provider in {
+                SupportedLiteLLMProvider.Tongyi_Qianwen,
+                SupportedLiteLLMProvider.Dashscope,
+            }:
+                sanitized_gen_conf["enable_thinking"] = enable_thinking
+            else:
+                target = sanitized_gen_conf if backend == "litellm" else sanitized_kwargs
+                _merge_qwen_chat_template_kwargs(target, enable_thinking)
+                logger.debug(
+                    "Applied Qwen3 thinking policy: backend=%s provider=%s enable_thinking=%s payload_path=%s",
+                    backend,
+                    provider,
+                    enable_thinking,
+                    "extra_body.chat_template_kwargs.enable_thinking",
+                )
+
+    if "gpt-5" in model_name_lower or "o1" in model_name_lower or "o3" in model_name_lower:
+        for key in ("temperature", "top_p", "presence_penalty", "frequency_penalty", "logprobs", "top_logprobs"):
+            sanitized_gen_conf.pop(key, None)
+            sanitized_kwargs.pop(key, None)
 
     if backend == "base":
         return sanitized_gen_conf, sanitized_kwargs

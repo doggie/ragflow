@@ -16,7 +16,7 @@
 
 import { memo } from 'react';
 
-import { Images } from '@/constants/common';
+import { CodeExtensions, Images } from '@/constants/common';
 import CSVFileViewer from './csv-preview';
 import { DocPreviewer } from './doc-preview';
 import { ExcelCsvPreviewer } from './excel-preview';
@@ -60,7 +60,7 @@ const DocumentPreview = function ({
           <DocPreviewer className={className} url={url} />
         </section>
       )}
-      {['txt', 'json'].indexOf(fileType) > -1 && (
+      {(['txt', 'json'].indexOf(fileType) > -1 || CodeExtensions.includes(fileType)) && (
         <section>
           <TxtPreviewer className={className} url={url} />
         </section>

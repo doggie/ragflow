@@ -169,12 +169,36 @@ func NewGitHubConnector(config map[string]any) (*GitHubConnector, error) {
 
 	branch := stringConfig(config["content_branch"])
 	if branch == "" {
+		branch = stringConfig(config["branch"])
+	}
+	if branch == "" {
 		branch = defaultGitHubContentBranch
 	}
 
+	owner := strings.TrimSpace(stringConfig(config["repository_owner"]))
+	repos := splitGitHubRepos(stringConfig(config["repository_name"]))
+
+	// Fallback to "repo": "owner/name" or "repo": "name"
+	if owner == "" || len(repos) == 0 {
+		repoConfig := strings.TrimSpace(stringConfig(config["repo"]))
+		if repoConfig != "" {
+			parts := strings.Split(repoConfig, "/")
+			if len(parts) >= 2 {
+				if owner == "" {
+					owner = strings.TrimSpace(parts[0])
+				}
+				if len(repos) == 0 {
+					repos = []string{strings.TrimSpace(strings.Join(parts[1:], "/"))}
+				}
+			} else if owner != "" && len(repos) == 0 {
+				repos = []string{repoConfig}
+			}
+		}
+	}
+
 	return &GitHubConnector{
-		owner:             strings.TrimSpace(stringConfig(config["repository_owner"])),
-		repos:             splitGitHubRepos(stringConfig(config["repository_name"])),
+		owner:             owner,
+		repos:             repos,
 		includePRs:        configBoolDefault(config["include_pull_requests"], true),
 		includeIssues:     configBoolDefault(config["include_issues"], true),
 		includeContent:    configBoolDefault(config["include_repository_content"], false),
@@ -1232,7 +1256,14 @@ type githubTreeResponse struct {
 // listRepoTree fetches the file tree for a repository using the Git Trees API.
 func (c *GitHubConnector) listRepoTree(ctx context.Context, fullName, branch string) ([]githubTreeEntry, error) {
 	var result githubTreeResponse
-	apiURL := c.apiURL("/repos/"+url.PathEscape(fullName)+"/git/trees/"+url.PathEscape(branch), url.Values{"recursive": {"1"}})
+	// fullName is "owner/repo", do not url.PathEscape the slash between owner and repo
+	owner, repo := c.owner, fullName
+	if strings.Contains(fullName, "/") {
+		parts := strings.SplitN(fullName, "/", 2)
+		owner = parts[0]
+		repo = parts[1]
+	}
+	apiURL := c.apiURL("/repos/"+url.PathEscape(owner)+"/"+url.PathEscape(repo)+"/git/trees/"+url.PathEscape(branch), url.Values{"recursive": {"1"}})
 	_, err := c.getJSON(ctx, apiURL, &result)
 	if err != nil {
 		return nil, err
@@ -1261,9 +1292,18 @@ func (c *GitHubConnector) shouldIndexFile(filePath string) bool {
 
 // fetchFileContent fetches the raw content of a file from GitHub.
 func (c *GitHubConnector) fetchFileContent(ctx context.Context, repoName, filePath string) ([]byte, error) {
+	// If repoName already contains owner (e.g. "funrobot0804/fms-restful-api"), extract repo name
+	actualRepo := repoName
+	if strings.HasPrefix(repoName, c.owner+"/") {
+		actualRepo = strings.TrimPrefix(repoName, c.owner+"/")
+	} else if strings.Contains(repoName, "/") {
+		parts := strings.SplitN(repoName, "/", 2)
+		actualRepo = parts[1]
+	}
+
 	// Try raw.githubusercontent.com first - doesn't count against API rate limit
 	rawURL := fmt.Sprintf("https://raw.githubusercontent.com/%s/%s/%s/%s",
-		c.owner, url.PathEscape(repoName), c.contentBranch, url.PathEscape(filePath))
+		c.owner, url.PathEscape(actualRepo), c.contentBranch, url.PathEscape(filePath))
 
 	client := utility.PinnedHTTPClient("raw.githubusercontent.com", "", 30*time.Second)
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, rawURL, nil)
@@ -1280,7 +1320,7 @@ func (c *GitHubConnector) fetchFileContent(ctx context.Context, repoName, filePa
 
 	if resp.StatusCode == http.StatusNotFound {
 		// Fallback to API if raw URL doesn't work (e.g., large files)
-		return c.fetchFileContentViaAPI(ctx, repoName, filePath)
+		return c.fetchFileContentViaAPI(ctx, actualRepo, filePath)
 	}
 
 	if resp.StatusCode >= 400 {
@@ -1292,8 +1332,16 @@ func (c *GitHubConnector) fetchFileContent(ctx context.Context, repoName, filePa
 
 // fetchFileContentViaAPI fetches file content using the GitHub Contents API.
 func (c *GitHubConnector) fetchFileContentViaAPI(ctx context.Context, repoName, filePath string) ([]byte, error) {
+	actualRepo := repoName
+	if strings.HasPrefix(repoName, c.owner+"/") {
+		actualRepo = strings.TrimPrefix(repoName, c.owner+"/")
+	} else if strings.Contains(repoName, "/") {
+		parts := strings.SplitN(repoName, "/", 2)
+		actualRepo = parts[1]
+	}
+
 	var contents []map[string]any
-	apiURL := "/repos/" + url.PathEscape(c.owner) + "/" + url.PathEscape(repoName) + "/contents/" + url.PathEscape(filePath)
+	apiURL := "/repos/" + url.PathEscape(c.owner) + "/" + url.PathEscape(actualRepo) + "/contents/" + url.PathEscape(filePath)
 	if _, err := c.getJSON(ctx, c.apiURL(apiURL, nil), &contents); err != nil {
 		// Single file response is a dict, not array
 		var singleFile map[string]any

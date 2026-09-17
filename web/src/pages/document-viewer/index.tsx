@@ -1,4 +1,4 @@
-import { Images } from '@/constants/common';
+import { CodeExtensions, Images } from '@/constants/common';
 import { restAPIv1 } from '@/utils/api';
 import { useParams, useSearchParams } from 'react-router';
 // import Docx from './docx';
@@ -49,7 +49,9 @@ const DocumentViewer = () => {
       {(ext === 'md' || ext === 'mdx') && (
         <Md url={api} className="!h-dvh p-5"></Md>
       )}
-      {ext === 'txt' && <TxtPreviewer url={api}></TxtPreviewer>}
+      {(ext === 'txt' || CodeExtensions.includes(ext!)) && (
+        <TxtPreviewer url={api}></TxtPreviewer>
+      )}
 
       {ext === 'pdf' && (
         <PdfPreview url={api} className="!h-dvh p-5"></PdfPreview>

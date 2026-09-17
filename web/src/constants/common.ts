@@ -207,6 +207,40 @@ export const Images = [
   'ico',
 ];
 
+export const CodeExtensions = [
+  'py',
+  'js',
+  'jsx',
+  'ts',
+  'tsx',
+  'go',
+  'java',
+  'c',
+  'cpp',
+  'h',
+  'hpp',
+  'cs',
+  'rs',
+  'php',
+  'rb',
+  'swift',
+  'kt',
+  'scala',
+  'sh',
+  'bash',
+  'zsh',
+  'sql',
+  'json',
+  'yaml',
+  'yml',
+  'xml',
+  'toml',
+  'ini',
+  'conf',
+  'log',
+  'env',
+];
+
 // Without FileViewer
 export const ExceptiveType = [
   'xlsx',
@@ -220,6 +254,7 @@ export const ExceptiveType = [
   'pptx',
   'html',
   'htm',
+  ...CodeExtensions,
   ...Images,
 ];
 
