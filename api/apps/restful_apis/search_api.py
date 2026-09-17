@@ -90,9 +90,10 @@ def list_searches():
         return get_json_result(code=RetCode.ARGUMENT_ERROR, message=str(e))
 
     try:
+        joined_tenants = TenantService.get_joined_tenants_by_user_id(current_user.id)
+        authorized_owner_ids = [m["tenant_id"] for m in joined_tenants]
         if not owner_ids:
-            tenants = []
-            search_apps, total = SearchService.get_by_tenant_ids(tenants, current_user.id, page_number, items_per_page, orderby, desc, keywords)
+            search_apps, total = SearchService.get_by_tenant_ids(authorized_owner_ids, current_user.id, page_number, items_per_page, orderby, desc, keywords)
         else:
             search_apps, total = SearchService.get_by_tenant_ids(owner_ids, current_user.id, 0, 0, orderby, desc, keywords)
             search_apps = [s for s in search_apps if s["tenant_id"] in owner_ids]

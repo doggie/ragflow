@@ -68,53 +68,9 @@ const SvgIcon = memo(
 
 SvgIcon.displayName = 'SvgIcon';
 
-const themeIcons = [
-  LLMFactory.FishAudio,
-  LLMFactory.TogetherAI,
-  LLMFactory.Meituan,
-  LLMFactory.Longcat,
-  LLMFactory.MinerU,
-  LLMFactory.MinerUNet,
-  LLMFactory.JiekouAI,
-  LLMFactory.Perplexity,
-];
+const themeIcons: string[] = [];
 
-const svgIcons = [
-  LLMFactory.LocalAI,
-  // LLMFactory.VolcEngine,
-  // LLMFactory.MiniMax,
-  LLMFactory.Gemini,
-  LLMFactory.StepFun,
-  LLMFactory.MinerU,
-  LLMFactory.MinerUNet,
-  LLMFactory.PaddleOCR,
-  LLMFactory.PaddleOCRLocal,
-  LLMFactory.N1n,
-  // LLMFactory.DeerAPI,
-  LLMFactory.Avian,
-  LLMFactory.RAGcon,
-  LLMFactory.SoMark,
-  LLMFactory.NewAPI,
-  LLMFactory.Astraflow,
-  LLMFactory.AstraflowCN,
-  LLMFactory.FuturMix,
-  LLMFactory.Xiaomi,
-  LLMFactory.YouDao,
-  LLMFactory.BAAI,
-  LLMFactory.NomicAI,
-  LLMFactory.SentenceTransformers,
-  LLMFactory.Grok,
-  LLMFactory.FastEmbed,
-  LLMFactory.HuaweiCloud,
-  LLMFactory.OrcaRouter,
-  LLMFactory.Qiniu,
-  LLMFactory.TokenHub,
-  LLMFactory.FunASR,
-  LLMFactory.AIMLAPI,
-  LLMFactory.GreenPT,
-  LLMFactory.Synthorai,
-  LLMFactory.MWS,
-];
+const svgIcons = [LLMFactory.OpenAiAPICompatible];
 
 export const LlmIcon = ({
   name,

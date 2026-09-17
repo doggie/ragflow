@@ -661,8 +661,8 @@ const UploadModal: React.FC<UploadModalProps> = ({
         t('skills.validation.valid') || 'Valid skill format',
       );
 
-      // 4. Upload to RAGFlow
-      setGitProgress('Uploading to RAGFlow...');
+      // 4. Upload to RAG
+      setGitProgress('Uploading to RAG...');
       const skillName =
         validation.name || repo.toLowerCase().replace(/[^a-z0-9_-]/g, '-');
 

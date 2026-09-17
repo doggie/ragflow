@@ -67,13 +67,16 @@ export function Sidebar({ selection, onSelect }: SidebarProps) {
   }, [addedProviders]);
 
   const filteredProviders = useMemo(() => {
+    // Only keep OpenAI-API-Compatible
+    const list = providers.filter(
+      (p) => p.name === 'OpenAI-API-Compatible',
+    );
     const q = search.trim().toLowerCase();
-    const list = q
-      ? providers.filter((p) => p.name.toLowerCase().includes(q))
-      : providers;
-    // Stable partition: added providers first, then unadded.
-    const added = list.filter((p) => addedSet.has(p.name));
-    const others = list.filter((p) => !addedSet.has(p.name));
+    const searched = q
+      ? list.filter((p) => p.name.toLowerCase().includes(q))
+      : list;
+    const added = searched.filter((p) => addedSet.has(p.name));
+    const others = searched.filter((p) => !addedSet.has(p.name));
     return [...added, ...others];
   }, [providers, search, addedSet]);
 

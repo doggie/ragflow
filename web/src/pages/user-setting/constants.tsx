@@ -42,22 +42,7 @@ export const UserSettingIconMap = {
 
 export * from '@/constants/setting';
 
-export const LocalLlmFactories = [
-  LLMFactory.Ollama,
-  LLMFactory.Xinference,
-  LLMFactory.LocalAI,
-  LLMFactory.LMStudio,
-  LLMFactory.OpenAiAPICompatible,
-  LLMFactory.TogetherAI,
-  LLMFactory.Replicate,
-  LLMFactory.OpenRouter,
-  LLMFactory.HuggingFace,
-  LLMFactory.GPUStack,
-  LLMFactory.ModelScope,
-  LLMFactory.VLLM,
-  LLMFactory.RAGcon,
-  LLMFactory.FunASR,
-];
+export const LocalLlmFactories = [LLMFactory.OpenAiAPICompatible];
 
 export enum TenantRole {
   Owner = 'owner',

@@ -58,19 +58,7 @@ export const formatNumberWithThousandsSeparator = (numberStr: string) => {
   return formattedNumber;
 };
 
-const orderFactoryList = [
-  LLMFactory.AIMLAPI,
-  LLMFactory.OpenAI,
-  LLMFactory.Moonshot,
-  LLMFactory.PPIO,
-  LLMFactory.ZhipuAI,
-  LLMFactory.Ollama,
-  LLMFactory.Xinference,
-  LLMFactory.Ai302,
-  LLMFactory.CometAPI,
-  LLMFactory.DeerAPI,
-  LLMFactory.JiekouAI,
-];
+const orderFactoryList = [LLMFactory.OpenAiAPICompatible];
 
 export const sortLLmFactoryListBySpecifiedOrder = (list: IFactory[]) => {
   const finalList: IFactory[] = [];

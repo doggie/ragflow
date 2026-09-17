@@ -80,7 +80,7 @@ export function Header({
               aria-current={pathname === Routes.Root ? 'page' : undefined}
               className="flex size-10 shrink-0 items-center justify-center"
             >
-              <img src={'/logo.svg'} alt="RAGFlow logo" className="size-10" />
+              <img src={'/logo.svg'} alt="RAG logo" className="size-10" />
             </Link>
           </div>
         </div>
@@ -100,28 +100,6 @@ export function Header({
           )}
           data-testid="auth-status"
         >
-          {!isCompact && (
-            <>
-              <a
-                className="inline-flex p-2 text-text-secondary hover:text-text-primary focus-visible:text-text-primary"
-                target="_blank"
-                href="https://discord.com/invite/NjYzJD3GM3"
-                rel="noreferrer noopener"
-              >
-                <IconFontFill name="a-DiscordIconSVGVectorIcon" />
-              </a>
-
-              <a
-                className="inline-flex p-2 text-text-secondary hover:text-text-primary focus-visible:text-text-primary"
-                target="_blank"
-                href="https://github.com/infiniflow/ragflow"
-                rel="noreferrer noopener"
-              >
-                <IconFontFill name="GitHub" />
-              </a>
-            </>
-          )}
-
           <DropdownMenu>
             <DropdownMenuTrigger asChild>
               <Button
@@ -156,18 +134,6 @@ export function Header({
 
           {!isCompact && (
             <>
-              <Button
-                asLink
-                variant="ghost"
-                size="icon"
-                className="size-8"
-                to="https://ragflow.io/docs/dev/category/user-guides"
-                target="_blank"
-                rel="noreferrer noopener"
-              >
-                <LucideCircleHelp className="size-[1em]" />
-              </Button>
-
               {hasNotification && <BellButton className="!size-8" />}
             </>
           )}

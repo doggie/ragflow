@@ -188,7 +188,26 @@ def _build_session_response(conv: dict) -> dict:
 
 
 async def _ensure_owned_chat(chat_id):
-    return await thread_pool_exec(DialogService.query, tenant_id=current_user.id, id=chat_id, status=StatusEnum.VALID.value)
+    """Check if the current user owns or has team access to a chat.
+
+    Returns the Dialog record if accessible, otherwise None.
+    Team members (via UserTenant) can access chats owned by their joined tenants.
+    """
+    # Direct ownership: user is the creator of the chat
+    owned = await thread_pool_exec(
+        DialogService.query, tenant_id=current_user.id, id=chat_id, status=StatusEnum.VALID.value
+    )
+    if owned:
+        return owned
+    # Team access: check if user belongs to the tenant that owns this chat
+    joined_tenants = TenantService.get_joined_tenants_by_user_id(current_user.id)
+    for tenant in joined_tenants:
+        owned = await thread_pool_exec(
+            DialogService.query, tenant_id=tenant["tenant_id"], id=chat_id, status=StatusEnum.VALID.value
+        )
+        if owned:
+            return owned
+    return None
 
 
 def _build_default_completion_dialog():
@@ -524,6 +543,10 @@ async def list_chats():
         page_number = validate_rest_api_page(request.args.get("page", DEFAULT_PAGE))
         items_per_page = validate_rest_api_page_size(request.args.get("page_size", DEFAULT_PAGE_SIZE))
 
+        # Query joined tenants so team members can see chats created by the team
+        joined_tenants = await thread_pool_exec(TenantService.get_joined_tenants_by_user_id, current_user.id)
+        authorized_owner_ids = {m["tenant_id"] for m in joined_tenants}
+
         if owner_ids:
             chats, total = await thread_pool_exec(
                 DialogService.get_by_tenant_ids,
@@ -544,7 +567,7 @@ async def list_chats():
         else:
             chats, total = await thread_pool_exec(
                 DialogService.get_by_tenant_ids,
-                [],
+                list(authorized_owner_ids),
                 current_user.id,
                 page_number,
                 items_per_page,

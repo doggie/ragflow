@@ -35,38 +35,5 @@ type MobileMenuFooterProps = {
 };
 
 export function MobileMenuFooter({ onClose }: MobileMenuFooterProps) {
-  const { t } = useTranslation();
-
-  return (
-    <div className="shrink-0 border-t border-border-button px-4 py-4">
-      <div className="flex flex-wrap items-center justify-center gap-x-2 gap-y-1 text-sm">
-        <FooterLink
-          href="https://discord.com/invite/NjYzJD3GM3"
-          target="_blank"
-          rel="noreferrer noopener"
-          onClick={onClose}
-        >
-          {t('header.discord')}
-        </FooterLink>
-        <FooterDivider />
-        <FooterLink
-          href="https://github.com/infiniflow/ragflow"
-          target="_blank"
-          rel="noreferrer noopener"
-          onClick={onClose}
-        >
-          {t('header.github')}
-        </FooterLink>
-        <FooterDivider />
-        <FooterLink
-          href="https://ragflow.io/docs/dev/category/user-guides"
-          target="_blank"
-          rel="noreferrer noopener"
-          onClick={onClose}
-        >
-          {t('header.help')}
-        </FooterLink>
-      </div>
-    </div>
-  );
+  return null;
 }
