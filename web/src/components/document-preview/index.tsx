@@ -25,6 +25,7 @@ import { Md } from './md';
 import PdfPreviewer, { IProps } from './pdf-preview';
 import { PptPreviewer } from './ppt-preview';
 import { TxtPreviewer } from './txt-preview';
+import { CodePreviewer } from './code-preview';
 import { VideoPreviewer } from './video-preview';
 
 type PreviewProps = {
@@ -60,9 +61,14 @@ const DocumentPreview = function ({
           <DocPreviewer className={className} url={url} />
         </section>
       )}
-      {(['txt', 'json'].indexOf(fileType) > -1 || CodeExtensions.includes(fileType)) && (
+      {fileType === 'txt' && (
         <section>
           <TxtPreviewer className={className} url={url} />
+        </section>
+      )}
+      {(fileType === 'json' || CodeExtensions.includes(fileType)) && (
+        <section>
+          <CodePreviewer className={className} url={url} ext={fileType} />
         </section>
       )}
       {Images.indexOf(fileType) > -1 && (

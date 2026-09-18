@@ -15,6 +15,7 @@ import Md from '@/components/document-preview/md';
 import PdfPreview from '@/components/document-preview/pdf-preview';
 import { PptPreviewer } from '@/components/document-preview/ppt-preview';
 import { TxtPreviewer } from '@/components/document-preview/txt-preview';
+import { CodePreviewer } from '@/components/document-preview/code-preview';
 import { previewHtmlFile } from '@/utils/file-util';
 import CSVFileViewer from '@/components/document-preview/csv-preview';
 // import styles from './index.less';
@@ -49,8 +50,9 @@ const DocumentViewer = () => {
       {(ext === 'md' || ext === 'mdx') && (
         <Md url={api} className="!h-dvh p-5"></Md>
       )}
-      {(ext === 'txt' || CodeExtensions.includes(ext!)) && (
-        <TxtPreviewer url={api}></TxtPreviewer>
+      {ext === 'txt' && <TxtPreviewer url={api}></TxtPreviewer>}
+      {CodeExtensions.includes(ext!) && (
+        <CodePreviewer url={api} ext={ext!} className="!h-dvh p-5" />
       )}
 
       {ext === 'pdf' && (

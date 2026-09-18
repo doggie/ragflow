@@ -164,7 +164,7 @@ class Dealer:
 
     def get_filters(self, req):
         condition = dict()
-        for key, field in {"kb_ids": "kb_id", "doc_ids": "doc_id"}.items():
+        for key, field in {"kb_ids": "kb_id", "doc_ids": "doc_id", "docnm_kwd": "docnm_kwd"}.items():
             if key in req and req[key] is not None:
                 condition[field] = req[key]
         # TODO(yzc): `available_int` is nullable however infinity doesn't support nullable columns.
@@ -663,6 +663,42 @@ class Dealer:
         idx_names = [index_name(tid) for tid in tenant_ids]
         min_match = vector_similarity_weight < 0.8
         sres = await self.search(req, idx_names, kb_ids, embd_mdl, highlight, rank_feature=rank_feature, min_match=min_match)
+
+        # Boost & inject chunks from documents explicitly mentioned by filename in the query
+        # (e.g., 'MoveTo.py', 'config.json', 'README.md')
+        fn_pattern = r'[\w\-.()]+\.(?:py|txt|docx?|pdf|md|json|csv|xlsx?|pptx?|html?|c|cpp|h|hpp|go|rs|ts|tsx|js|jsx|yaml|yml|sh)'
+        mentioned_filenames = list(dict.fromkeys(re.findall(fn_pattern, question, flags=re.IGNORECASE)))
+        if mentioned_filenames and kb_ids:
+            try:
+                fn_req = {
+                    "kb_ids": kb_ids,
+                    "doc_ids": doc_ids,
+                    "docnm_kwd": mentioned_filenames if len(mentioned_filenames) > 1 else mentioned_filenames[0],
+                    "available_int": 1,
+                    "size": 32,
+                    "page": 1,
+                }
+                fn_res = await self.search(fn_req, idx_names, kb_ids, emb_mdl=None, highlight=highlight)
+                if fn_res and fn_res.ids:
+                    combined_ids = list(fn_res.ids) + [cid for cid in sres.ids if cid not in fn_res.ids]
+                    combined_field = dict(sres.field or {})
+                    combined_field.update(fn_res.field or {})
+                    combined_highlight = dict(sres.highlight or {})
+                    if fn_res.highlight:
+                        combined_highlight.update(fn_res.highlight)
+                    sres = self.SearchResult(
+                        total=len(combined_ids),
+                        ids=combined_ids,
+                        query_vector=sres.query_vector,
+                        field=combined_field,
+                        highlight=combined_highlight,
+                        aggregation=sres.aggregation,
+                        keywords=sres.keywords,
+                        group_docs=sres.group_docs,
+                    )
+            except Exception as e:
+                logging.warning(f"Failed to inject filename-matched chunks: {e}")
+
         # Temporary retrieval-side guard: prune chunks whose parent document no
         # longer exists before reranking and returning results.
         sres = await self._prune_deleted_chunks(sres)
@@ -735,6 +771,15 @@ class Dealer:
             ranks["doc_aggs"] = []
             return ranks
 
+        # If specific documents were explicitly named in the query (e.g. MoveTo.py),
+        # prioritize their chunks by boosting similarity scores so they are guaranteed
+        # to enter top-N before cross-encoder truncation.
+        if mentioned_filenames:
+            for idx, cid in enumerate(sres.ids):
+                chunk_docnm = sres.field.get(cid, {}).get("docnm_kwd", "")
+                if any(mfn.lower() == chunk_docnm.lower() for mfn in mentioned_filenames):
+                    sim_np[idx] += 10.0
+
         # Use stable sort for deterministic ordering when scores are tied
         sorted_idx = np.argsort(sim_np * -1, kind="stable")
 
@@ -796,24 +841,24 @@ class Dealer:
             ranks["chunks"].append(d)
 
         if aggs:
+            # Use doc_id as key to avoid collisions when multiple docs share the same name.
+            # Previously used docnm_kwd (document name) as key, which caused only the last
+            # doc_id to be preserved when two documents had the same filename.
+            doc_aggs_by_id: dict = {}
             for i in valid_idx:
                 id = sres.ids[i]
                 chunk = sres.field[id]
                 dnm = chunk.get("docnm_kwd", "")
                 did = chunk.get("doc_id", "")
-                if dnm not in ranks["doc_aggs"]:
-                    ranks["doc_aggs"][dnm] = {"doc_id": did, "count": 0}
-                ranks["doc_aggs"][dnm]["count"] += 1
+                if did not in doc_aggs_by_id:
+                    doc_aggs_by_id[did] = {"doc_name": dnm, "doc_id": did, "count": 0}
+                doc_aggs_by_id[did]["count"] += 1
 
             ranks["doc_aggs"] = [
-                {
-                    "doc_name": k,
-                    "doc_id": v["doc_id"],
-                    "count": v["count"],
-                }
-                for k, v in sorted(
-                    ranks["doc_aggs"].items(),
-                    key=lambda x: x[1]["count"] * -1,
+                v
+                for v in sorted(
+                    doc_aggs_by_id.values(),
+                    key=lambda x: x["count"] * -1,
                 )
             ]
         else:
