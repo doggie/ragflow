@@ -999,12 +999,19 @@ class SearchDatasetReq(BaseModel):
 
     model_config = ConfigDict(extra="ignore")
 
-    question: Annotated[str, StringConstraints(strip_whitespace=True, min_length=1), Field(...)]
+    # Question upper bound sized to keep the embedding call below the
+    # configured embedding model's n_ctx (default 8192 tokens, ~4 chars/token
+    # → ~32k char ceiling). Without this, q100k-style inputs go straight to
+    # the embedder and the downstream 4xx surfaces as a generic code=102.
+    question: Annotated[str, StringConstraints(strip_whitespace=True, min_length=1, max_length=32000), Field(...)]
     doc_ids: Annotated[list[str], Field(default=[])]
     page: Annotated[int, Field(default=1, ge=1)]
     page_size: Annotated[int | None, Field(default=None, ge=1, le=100)]
     size: Annotated[int, Field(default=30, ge=1, le=100)]
-    rerank_candidates_count: Annotated[int, Field(default=64, ge=1)]
+    # Capped so an extreme value doesn't reach ES / downstream and surface
+    # as code=102 (S4-03). 100k comfortably covers the 10k default ES window
+    # and any legitimate pagination fan-out.
+    rerank_candidates_count: Annotated[int, Field(default=64, ge=1, le=100000)]
     knn_top_k: Annotated[int, Field(default=1024, ge=1, le=2048, validation_alias=AliasChoices("knn_top_k", "top_k"))]
     knn_num_candidates: Annotated[int, Field(default=2048, ge=1, le=10000)]
     similarity_threshold: Annotated[float, Field(default=0.0, ge=0.0, le=1.0)]
@@ -1031,12 +1038,13 @@ class SearchDatasetsReq(BaseModel):
     model_config = ConfigDict(extra="ignore")
 
     dataset_ids: Annotated[list[str], Field(..., min_length=1)]
-    question: Annotated[str, StringConstraints(strip_whitespace=True, min_length=1), Field(...)]
+    # See SearchDatasetReq.question for the upper-bound rationale.
+    question: Annotated[str, StringConstraints(strip_whitespace=True, min_length=1, max_length=32000), Field(...)]
     doc_ids: Annotated[list[str], Field(default=[])]
     page: Annotated[int, Field(default=1, ge=1)]
     page_size: Annotated[int | None, Field(default=None, ge=1, le=100)]
     size: Annotated[int, Field(default=30, ge=1, le=100)]
-    rerank_candidates_count: Annotated[int, Field(default=64, ge=1)]
+    rerank_candidates_count: Annotated[int, Field(default=64, ge=1, le=100000)]
     knn_top_k: Annotated[int, Field(default=1024, ge=1, le=2048, validation_alias=AliasChoices("knn_top_k", "top_k"))]
     knn_num_candidates: Annotated[int, Field(default=2048, ge=1, le=10000)]
     similarity_threshold: Annotated[float, Field(default=0.0, ge=0.0, le=1.0)]

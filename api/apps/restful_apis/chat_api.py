@@ -302,6 +302,18 @@ def _normalize_completion_messages(req):
             code=RetCode.ARGUMENT_ERROR,
             message="`messages` must contain a user message.",
         )
+
+    # Reject empty / whitespace-only user content up front (matches the search
+    # endpoint's min_length=1 behaviour). Sending it through would still trigger
+    # an LLM call and produce a generic greeting, which wastes compute and is
+    # inconsistent with how `POST /datasets/search` validates `question`.
+    for m in msg:
+        content = m.get("content")
+        if isinstance(content, str) and not content.strip():
+            return None, get_data_error_result(
+                code=RetCode.ARGUMENT_ERROR,
+                message="`messages` user content must contain at least 1 non-whitespace character.",
+            )
     if msg[-1]["role"] != "user":
         return None, get_data_error_result(
             code=RetCode.ARGUMENT_ERROR,
