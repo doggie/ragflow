@@ -51,6 +51,9 @@ class Base(ABC):
         """
         if not query or not texts:
             return np.zeros(len(texts) if texts else 0, dtype=float), 0
+        # Bound excessive query lengths (e.g. pasted logs/multi-thousand token messages)
+        # to prevent local or remote reranker backends from failing with 500 / context overflow.
+        query = truncate(query, 500)
         rank, token_count = self._compute_rank(query, texts)
         rank = np.asarray(rank, dtype=float)
         if rank.size:

@@ -231,10 +231,23 @@ async def keyword_extraction(chat_mdl, content, topn=3):
     kwd = await chat_mdl.async_chat(rendered_prompt, msg[1:], {"temperature": 0.2})
     if isinstance(kwd, tuple):
         kwd = kwd[0]
-    kwd = re.sub(r"^.*</think>", "", kwd, flags=re.DOTALL)
+    kwd = re.sub(r"^.*</think>", "", kwd, flags=re.DOTALL).strip()
     if kwd.find("**ERROR**") >= 0:
         return ""
-    return kwd
+    # Sanitize and validate LLM output:
+    # 1. Take only the first non-empty line (avoids multi-paragraph conversational fluff)
+    # 2. Extract comma/newline separated short keywords
+    lines = [line.strip() for line in kwd.split("\n") if line.strip()]
+    if not lines:
+        return ""
+    first_line = lines[0]
+    # Remove markdown prefixes like "- " or "1. " or "Keywords: "
+    first_line = re.sub(r"^(?:keywords|key words|關鍵詞|關鍵字|tags)\s*[:：]\s*", "", first_line, flags=re.IGNORECASE)
+    parts = [re.sub(r"^[0-9.\-*#\s]+", "", p).strip().strip("\"'").strip() for p in re.split(r"[,，\n]", first_line)]
+    clean_parts = [p for p in parts if p and len(p) <= 40 and not p.lower().startswith("here are") and not p.lower().startswith("the ")]
+    if not clean_parts:
+        return ""
+    return ", " + ", ".join(clean_parts[:topn])
 
 
 async def question_proposal(chat_mdl, content, topn=3):

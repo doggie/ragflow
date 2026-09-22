@@ -278,20 +278,24 @@ class Dealer:
                 total = self.dataStore.get_total(res)
                 logging.debug("Dealer.search TOTAL: {}".format(total))
 
-                # If result is empty, try again with lower min_match
+                # If result is empty, retry with relaxed criteria
                 if total == 0:
                     if filters.get("doc_id"):
                         res = await thread_pool_exec(self.dataStore.search, src, [], filters, [], orderBy, offset, limit, idx_names, kb_ids)
                         total = self.dataStore.get_total(res)
                     else:
-                        matchText, _ = self.qryr.question(qst, min_match=(0.1 if min_match else 0))
-                        matchDense.extra_options["similarity"] = 0.17
+                        # Drop the lexical query_string clause entirely on retry so cross-lingual
+                        # / out-of-vocab queries can fall back to pure dense retrieval.
+                        retry_exprs = [matchDense]
+                        retry_match_dense = matchDense
+                        previous_similarity = matchDense.extra_options.get("similarity", 0.1)
+                        retry_match_dense.extra_options["similarity"] = min(previous_similarity, 0.05)
                         res = await thread_pool_exec(
                             self.dataStore.search,
                             src,
                             highlightFields,
                             filters,
-                            [matchText, matchDense, fusionExpr] if matchText else [matchDense],
+                            retry_exprs,
                             orderBy,
                             offset,
                             limit,
@@ -300,6 +304,8 @@ class Dealer:
                             rank_feature=rank_feature,
                         )
                         total = self.dataStore.get_total(res)
+                        # Keep matchDense's similarity in a consistent state for downstream callers
+                        matchDense.extra_options["similarity"] = previous_similarity
                     logging.debug("Dealer.search 2 TOTAL: {}".format(total))
 
             for k in keywords:
@@ -589,7 +595,11 @@ class Dealer:
         # rerank_mdl.similarity() returns scores normalized to [0, 1] for every
         # provider (see RerankModel.Base.similarity), so the blend below stays
         # on a single scale regardless of the configured reranker.
-        vtsim, _ = rerank_mdl.similarity(query, docs)
+        try:
+            vtsim, _ = rerank_mdl.similarity(query, docs)
+        except Exception as e:
+            logging.warning("rerank_by_model failed, falling back to token similarity: %s", e)
+            vtsim = np.array(tksim, dtype=float)
         ## For rank feature(tag_fea) scores.
         rank_fea = self._rank_feature_scores(rank_feature, sres)
 
@@ -635,7 +645,10 @@ class Dealer:
 
         page = max(page, 1)
         if page * page_size > rerank_candidates_count:
-            raise Exception(f"rerank_candidates_count({rerank_candidates_count}) must be greater than page * page_size({page * page_size}) to ensure correct pagination.")
+            if rerank_mdl is None:
+                rerank_candidates_count = page * page_size
+            else:
+                raise Exception(f"rerank_candidates_count({rerank_candidates_count}) must be greater than page * page_size({page * page_size}) to ensure correct pagination.")
         if rerank_mdl is not None and page != 1:
             raise Exception(f"Pagination is not supported when rerank_mdl is specified. Please set page=1 to retrieve the top {page_size} results.")
 
