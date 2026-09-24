@@ -64,7 +64,13 @@
       "name": "sandbox.provider_type",
       "source": "variable",
       "data_type": "string",
-      "value": "self_managed"
+      "value": "local"
+    },
+    {
+      "name": "sandbox.local",
+      "source": "variable",
+      "data_type": "json",
+      "value": "{\"work_dir\": \"/tmp/ragflow-codeexec\", \"timeout\": 30, \"max_memory_mb\": 512}"
     },
     {
       "name": "sandbox.self_managed",
