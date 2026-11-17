@@ -802,7 +802,13 @@ class Base(ABC):
                     _commit_round(round_usage, round_estimate)
 
                     if answer and not final_tool_calls:
-                        logging.info(f"[Tool loop] Answering directly at step {_round + 1} — no tool needed.")
+                        logging.info(
+                            "[Tool loop] Answering directly at step %d — no tool needed. model=%s answer_len=%d answer_preview=%r",
+                            _round + 1,
+                            getattr(self, "model_name", None),
+                            len(answer),
+                            answer[:300],
+                        )
                         yield total_tokens
                         return
 
@@ -2529,7 +2535,13 @@ class LiteLLMBase(ABC):
                     _commit_round(round_usage, round_estimate)
 
                     if answer and not final_tool_calls:
-                        logging.info(f"[Tool loop] Answering directly at step {_round + 1} — no tool needed.")
+                        logging.info(
+                            "[Tool loop] Answering directly at step %d — no tool needed. model=%s answer_len=%d answer_preview=%r",
+                            _round + 1,
+                            getattr(self, "model_name", None),
+                            len(answer),
+                            answer[:300],
+                        )
                         yield total_tokens
                         return
 

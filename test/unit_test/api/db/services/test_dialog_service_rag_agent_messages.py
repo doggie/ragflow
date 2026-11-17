@@ -231,7 +231,21 @@ def test_render_reasoning_system_prompt_substitutes_date_and_knowledge():
     rendered = dialog_service._render_reasoning_system_prompt(dialog, prompt_config, kwargs)
 
     assert rendered.startswith("Role: pirate. Date: 2")
-    assert "Context: ''." in rendered
+    # With kb_ids bound, {knowledge} renders the retrieval note so the router
+    # model doesn't read the block as an empty KB and skip the `rag` call.
+    assert "retrieved on demand" in rendered.lower()
+    assert "rag` tool" in rendered
+
+
+@pytest.mark.p2
+def test_render_reasoning_system_prompt_renders_empty_knowledge_without_kbs():
+    """Without knowledge bases, {knowledge} stays empty."""
+    dialog = SimpleNamespace(kb_ids=[])
+    prompt_config = {"system": "Context: '{knowledge}'."}
+
+    rendered = dialog_service._render_reasoning_system_prompt(dialog, prompt_config, {})
+
+    assert rendered == "Context: ''."
 
 
 @pytest.mark.p2
@@ -248,3 +262,39 @@ def test_render_reasoning_system_prompt_replaces_optional_missing_parameters():
 
     # Missing optional parameters are replaced with a space, matching async_chat.
     assert rendered == "Lang:  ."
+
+
+@pytest.mark.p2
+def test_rag_agent_retains_chunk_references_when_citation_markers_are_missing(monkeypatch):
+    """When the LLM omits explicit [ID:n] markers, chunks in kbinfos are still kept as references."""
+    chat_mdl = _RecordingChatModel()
+    monkeypatch.setattr(dialog_service, "get_models", lambda _dialog, **_kw: ([_KB], None, None, chat_mdl, None))
+
+    class _RAGToolsWithChunks:
+        def __init__(self, *_args, **_kwargs):
+            self.kbinfos = {
+                "chunks": [
+                    {"doc_id": "doc-1", "content_with_weight": "chunk content 1", "vector": [0.1, 0.2]},
+                    {"doc_id": "doc-2", "content_with_weight": "chunk content 2"},
+                ],
+                "doc_aggs": [{"doc_id": "doc-1", "doc_name": "MoveTo.py"}, {"doc_id": "doc-2", "doc_name": "API.md"}],
+            }
+            self.tools = []
+
+        def sys_prompt(self):
+            return "You are a helpful assistant."
+
+    monkeypatch.setattr(dialog_service, "RAGTools", _RAGToolsWithChunks)
+    monkeypatch.setattr(dialog_service, "tts", lambda _mdl, _text: None)
+
+    async def _run():
+        return [ev async for ev in dialog_service.rag_agent(_DIALOG, [{"role": "user", "content": "test question"}], False, reasoning="2")]
+
+    events = asyncio.run(_run())
+    final_event = events[-1]
+    assert "reference" in final_event
+    ref = final_event["reference"]
+    assert len(ref["chunks"]) == 2
+    assert "vector" not in ref["chunks"][0]
+    assert {d["doc_id"] for d in ref["doc_aggs"]} == {"doc-1", "doc-2"}
+

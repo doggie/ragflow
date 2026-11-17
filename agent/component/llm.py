@@ -31,7 +31,7 @@ from api.db.joint_services.tenant_model_service import (
     resolve_model_type,
 )
 from api.db.services.dialog_service import _stream_with_think_delta
-from api.db.services.llm_service import LLMBundle
+from api.db.services.llm_service import LLMBundle, LLM_SETTING_DEFAULTS
 from common.connection_utils import timeout
 from common.constants import LLMType
 from rag.prompts.generator import citation_prompt, message_fit_in, structured_output_prompt, tool_call_summary
@@ -70,7 +70,12 @@ class LLMParam(ComponentParamBase):
             self.check_nonnegative_number(self.max_rounds, "[Agent] Max rounds")
 
     def gen_conf(self):
-        conf = {}
+        # Start from the shared generation defaults so an unset slider still
+        # carries the same safety net as the chat path (e.g. frequency_penalty
+        # guards against degenerate "attempting attempting ..." loops when the
+        # agent canvas never enabled that parameter). Explicitly enabled
+        # values below override the defaults.
+        conf = dict(LLM_SETTING_DEFAULTS)
 
         def get_attr(nm):
             try:

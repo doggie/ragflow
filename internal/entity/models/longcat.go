@@ -96,6 +96,8 @@ func (l *LongCatModel) ChatWithMessages(ctx context.Context, modelName string, m
 
 	reqBody := buildRequestBody(chatModelConfig, modelName, messages, false)
 	delete(reqBody, "stop")
+	delete(reqBody, "presence_penalty")
+	delete(reqBody, "frequency_penalty")
 
 	body, err := l.baseModel.doRequest(ctx, url, apiConfig, reqBody, nonStreamCallTimeout)
 	if err != nil {
@@ -127,6 +129,8 @@ func (l *LongCatModel) ChatStreamlyWithSender(ctx context.Context, modelName str
 	url := fmt.Sprintf("%s/%s", baseURL, l.baseModel.URLSuffix.Chat)
 	reqBody := buildRequestBody(chatModelConfig, modelName, messages, true)
 	delete(reqBody, "stop")
+	delete(reqBody, "presence_penalty")
+	delete(reqBody, "frequency_penalty")
 	reqBody["stream_options"] = map[string]any{"include_usage": true}
 
 	if chatModelConfig != nil {

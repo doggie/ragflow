@@ -214,9 +214,34 @@ func (e *einoChatInvoker) Invoke(ctx context.Context, db *gorm.DB, req ChatInvok
 	cm := models.NewChatModel(d, &modelName, cfg)
 
 	chatCfg := &models.ChatConfig{
-		Temperature: req.Temperature,
-		TopP:        req.TopP,
-		MaxTokens:   req.MaxTokens,
+		Temperature:      req.Temperature,
+		TopP:             req.TopP,
+		MaxTokens:        req.MaxTokens,
+		PresencePenalty:  req.PresencePenalty,
+		FrequencyPenalty: req.FrequencyPenalty,
+	}
+	// Python seeds LLM_SETTING_DEFAULTS (llm_service.py) into every resolved
+	// gen_conf — temperature=0.1, top_p=0.3, frequency_penalty=0.7,
+	// presence_penalty=0.4 — to blunt degenerate repetition loops when a
+	// canvas/call site leaves a knob unset. Fill the same values here so
+	// the defaults apply not only to the LLM component's mergeLLMParam
+	// path but also to shared-invoker callers (agentic search harness,
+	// tools) that bypass LLMParam entirely.
+	if chatCfg.Temperature == nil {
+		f := 0.1
+		chatCfg.Temperature = &f
+	}
+	if chatCfg.TopP == nil {
+		f := 0.3
+		chatCfg.TopP = &f
+	}
+	if chatCfg.FrequencyPenalty == nil {
+		f := 0.7
+		chatCfg.FrequencyPenalty = &f
+	}
+	if chatCfg.PresencePenalty == nil {
+		f := 0.4
+		chatCfg.PresencePenalty = &f
 	}
 	// Propagate the agent-level Thinking setting to the driver so
 	// providers like DeepSeek can send thinking: {type: "disabled"}

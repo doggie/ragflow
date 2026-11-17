@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with th
 
 ## Project Overview
 
-RAGFlow frontend is a React/TypeScript application built with UmiJS:
+RAGFlow frontend is a React/TypeScript application built with Vite:
 
 - **Components**: shadcn/ui
 - **Styling**: Tailwind CSS
@@ -21,6 +21,7 @@ npm run build      # Production build
 npm run lint       # oxlint
 npm run format     # oxfmt
 npm run test       # Jest tests
+npm run test -- <path/to/file.test.ts> -t "<name>"   # single file/test
 ```
 
 ## Development Conventions

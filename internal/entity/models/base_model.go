@@ -545,6 +545,14 @@ func buildRequestBody(cfg *ChatConfig, modelName string, messages []Message, str
 			reqBody["stop"] = *cfg.Stop
 		}
 
+		if cfg.PresencePenalty != nil {
+			reqBody["presence_penalty"] = *cfg.PresencePenalty
+		}
+
+		if cfg.FrequencyPenalty != nil {
+			reqBody["frequency_penalty"] = *cfg.FrequencyPenalty
+		}
+
 		if cfg.Tools != nil {
 			reqBody["tools"] = cfg.Tools
 			toolChoice := "auto"

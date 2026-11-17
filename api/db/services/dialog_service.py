@@ -333,9 +333,9 @@ async def async_chat_solo(dialog, messages, stream=True, session_id=None):
     system_prompt = prompt_config.get("system", "").replace("{date}", sys_date)
     if stream:
         if model_config["model_type"] == "chat":
-            stream_iter = chat_mdl.async_chat_streamly_delta(system_prompt, msg, dialog.llm_setting)
+            stream_iter = chat_mdl.async_chat_streamly_delta(system_prompt, msg, resolve_llm_setting(dialog.llm_setting))
         else:
-            stream_iter = chat_mdl.async_chat_streamly_delta(system_prompt, msg, dialog.llm_setting, images=image_files)
+            stream_iter = chat_mdl.async_chat_streamly_delta(system_prompt, msg, resolve_llm_setting(dialog.llm_setting), images=image_files)
         async for kind, value, state in _stream_with_think_delta(stream_iter):
             if kind == "marker":
                 flags = {"start_to_think": True} if value == "<think>" else {"end_to_think": True}
@@ -344,9 +344,9 @@ async def async_chat_solo(dialog, messages, stream=True, session_id=None):
             yield {"answer": value, "reference": {}, "audio_binary": tts(tts_mdl, value), "prompt": "", "created_at": time.time(), "final": False}
     else:
         if model_config["model_type"] == "chat":
-            answer = await chat_mdl.async_chat(system_prompt, msg, dialog.llm_setting)
+            answer = await chat_mdl.async_chat(system_prompt, msg, resolve_llm_setting(dialog.llm_setting))
         else:
-            answer = await chat_mdl.async_chat(system_prompt, msg, dialog.llm_setting, images=image_files)
+            answer = await chat_mdl.async_chat(system_prompt, msg, resolve_llm_setting(dialog.llm_setting), images=image_files)
         user_content = msg[-1].get("content", "[content not available]")
         logging.debug("User: {}|Assistant: {}".format(user_content, answer))
         yield {"answer": answer, "reference": {}, "audio_binary": tts(tts_mdl, answer), "prompt": "", "created_at": time.time()}
@@ -823,7 +823,7 @@ async def async_chat(dialog, messages, stream=True, **kwargs):
         kwargs["knowledge"] = "\n------\n" + knowledge_text
     else:
         kwargs.setdefault("knowledge", "")
-    gen_conf = dialog.llm_setting
+    gen_conf = resolve_llm_setting(dialog.llm_setting)
 
     system_content = prompt_config["system"].format(**kwargs)
     # If knowledge was retrieved but the template has no {knowledge}
@@ -1935,13 +1935,23 @@ async def gen_mindmap(question, kb_ids, tenant_id, search_config={}):
     return mind_map.output
 
 
+_REASONING_RETRIEVAL_NOTE = (
+    "Retrieved on demand. Knowledge-base content is fetched per question via the `rag` tool. "
+    "Call `rag` for any question that could depend on knowledge-base content — never assume the knowledge base is empty."
+)
+
+
 def _render_reasoning_system_prompt(dialog, prompt_config: dict, kwargs: dict) -> str:
     """Render the dialog-level system prompt for the reasoning agent path.
 
     Mirrors the substitutions ``async_chat`` performs for the non-reasoning path
     so that configured system prompts are honored when reasoning is enabled.
-    The ``{knowledge}`` placeholder is defaulted to an empty string because the
-    agentic graph supplies retrieved evidence through its own evidence block.
+    Retrieval happens lazily through the ``rag`` tool, so ``{knowledge}`` is
+    never inlined here — but rendering it as an empty string makes the outer
+    router model read the block as "the knowledge base is empty" and answer
+    without ever calling ``rag`` (which also leaves the answer without
+    citations). When knowledge bases are bound, the placeholder renders an
+    explicit retrieval note instead; with no ``kb_ids`` it stays empty.
     """
     system = prompt_config.get("system", "")
     if not system:
@@ -1950,10 +1960,11 @@ def _render_reasoning_system_prompt(dialog, prompt_config: dict, kwargs: dict) -
     sys_date = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S")
     kwargs["date"] = sys_date
 
+    has_kbs = bool(dialog.kb_ids)
     param_keys = [p["key"] for p in prompt_config.get("parameters", [])]
-    if dialog.kb_ids and "knowledge" not in param_keys and "{knowledge}" in system:
+    if has_kbs and "knowledge" not in param_keys and "{knowledge}" in system:
         param_keys.append("knowledge")
-        kwargs.setdefault("knowledge", "")
+        kwargs.setdefault("knowledge", _REASONING_RETRIEVAL_NOTE)
 
     for p in prompt_config.get("parameters", []):
         if p["key"] == "knowledge":
@@ -1964,7 +1975,10 @@ def _render_reasoning_system_prompt(dialog, prompt_config: dict, kwargs: dict) -
             system = system.replace("{%s}" % p["key"], " ")
 
     fmt_kwargs = dict(kwargs)
-    fmt_kwargs.setdefault("knowledge", "")
+    if has_kbs:
+        fmt_kwargs.setdefault("knowledge", _REASONING_RETRIEVAL_NOTE)
+    else:
+        fmt_kwargs.setdefault("knowledge", "")
     return system.format(**fmt_kwargs)
 
 
@@ -2041,7 +2055,16 @@ async def rag_agent(dialog, messages, stream=True, **kwargs):
     prompt_config = dialog.prompt_config or {}
     assert messages[-1]["role"] == "user", "The last content of this conversation is not from user."
     reasoning = kwargs["reasoning"] if "reasoning" in kwargs else prompt_config.get("reasoning", 0)
+    logging.info(
+        "[rag_agent] dialog_id=%s kwargs_reasoning=%r prompt_config_reasoning=%r resolved_reasoning=%r kb_ids=%r",
+        getattr(dialog, "id", None),
+        kwargs.get("reasoning", "<missing>"),
+        prompt_config.get("reasoning", "<missing>"),
+        reasoning,
+        getattr(dialog, "kb_ids", None),
+    )
     if not reasoning or str(reasoning).strip() == "0":
+        logging.info("[rag_agent] reasoning disabled/zero -> delegating to async_chat")
         async for ans in async_chat(dialog, messages, stream, **kwargs):
             yield ans
         return
@@ -2114,7 +2137,7 @@ async def rag_agent(dialog, messages, stream=True, **kwargs):
             if isinstance(_raw, bool) and not _raw:
                 thinking_mode = "low"
 
-    gen_conf = dialog.llm_setting or {}
+    gen_conf = resolve_llm_setting(dialog.llm_setting)
     doc_scope = None
     if "doc_ids" in kwargs:
         if isinstance(kwargs["doc_ids"], str):
@@ -2185,6 +2208,13 @@ async def rag_agent(dialog, messages, stream=True, **kwargs):
                 doc_id = rag_tools.kbinfos["chunks"][chunk_index].get("doc_id")
                 if doc_id:
                     doc_ids.add(doc_id)
+
+        if not doc_ids and rag_tools.kbinfos.get("chunks"):
+            # The final-answer model composed from ``rag_tools.kbinfos`` but
+            # emitted no ``[ID:n]`` markers (small models drop them). Keep the
+            # retrieved chunks as references so the client can still render the
+            # source documents instead of an empty list.
+            doc_ids = {c.get("doc_id") for c in rag_tools.kbinfos["chunks"] if c.get("doc_id")}
 
         recall_docs = [d for d in rag_tools.kbinfos["doc_aggs"] if d["doc_id"] in doc_ids]
         if not recall_docs:
