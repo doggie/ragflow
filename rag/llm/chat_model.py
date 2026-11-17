@@ -29,6 +29,8 @@ import json_repair
 from json.decoder import JSONDecodeError
 import litellm
 from openai import AsyncOpenAI, OpenAI
+import threading
+import weakref
 from enum import StrEnum
 
 from common.aimlapi_utils import attribution_headers
@@ -263,12 +265,62 @@ def _move_litellm_provider_body_fields(provider: SupportedLiteLLMProvider | str 
     return completion_args
 
 
+# r10：共用 OpenAI 用戶端。原本每個 Base 實例（每次檢索/對話都會建一個 LLMBundle）各自新建且從不關閉，
+# 外漏的 httpx/asyncio 連線在 GC 時被批次清理，會讓剛建立的新連線停在「已連上、請求未送出」直到 LLM_TIMEOUT_SECONDS（600 秒）。
+# 同步用戶端（httpx.Client，執行緒安全）全程序共用；非同步用戶端依 event loop 共用，loop 結束後自動釋放。
+_SHARED_CLIENT_LOCK = threading.Lock()
+_SHARED_SYNC_CLIENTS = {}
+_SHARED_ASYNC_CLIENTS = weakref.WeakKeyDictionary()
+
+
+def _shared_openai_client(key, base_url, timeout):
+    k = (key, base_url, timeout)
+    with _SHARED_CLIENT_LOCK:
+        c = _SHARED_SYNC_CLIENTS.get(k)
+        if c is None:
+            c = OpenAI(api_key=key, base_url=base_url, timeout=timeout)
+            _SHARED_SYNC_CLIENTS[k] = c
+        return c
+
+
+def _shared_async_openai_client(key, base_url, timeout):
+    try:
+        loop = asyncio.get_running_loop()
+    except RuntimeError:   # 不在 event loop 內：無法安全共用，維持原本行為（新建）
+        return AsyncOpenAI(api_key=key, base_url=base_url, timeout=timeout)
+    k = (key, base_url, timeout)
+    with _SHARED_CLIENT_LOCK:
+        per_loop = _SHARED_ASYNC_CLIENTS.get(loop)
+        if per_loop is None:
+            per_loop = {}
+            _SHARED_ASYNC_CLIENTS[loop] = per_loop
+        c = per_loop.get(k)
+        if c is None:
+            c = AsyncOpenAI(api_key=key, base_url=base_url, timeout=timeout)
+            per_loop[k] = c
+        return c
+
+
 class Base(ABC):
+    @property
+    def async_client(self):
+        override = getattr(self, "_async_client_override", None)
+        if override is not None:
+            return override
+        args = getattr(self, "_async_client_args", None)
+        if args is None:
+            raise AttributeError("async_client")
+        return _shared_async_openai_client(*args)
+
+    @async_client.setter
+    def async_client(self, value):
+        self._async_client_override = value
+
     def __init__(self, key, model_name, base_url, **kwargs):
         timeout = int(os.environ.get("LLM_TIMEOUT_SECONDS", 600))
         self.base_url = ensure_v1(base_url)
-        self.client = OpenAI(api_key=key, base_url=self.base_url, timeout=timeout)
-        self.async_client = AsyncOpenAI(api_key=key, base_url=self.base_url, timeout=timeout)
+        self.client = _shared_openai_client(key, self.base_url, timeout)   # r10：共用，不再每次新建
+        self._async_client_args = (key, self.base_url, timeout)            # r10：async_client 依 event loop 共用（見上方 property）
         self.model_name = model_name
         # Configure retry parameters
         self.max_retries = kwargs.get("max_retries", int(os.environ.get("LLM_MAX_RETRIES", 5)))
